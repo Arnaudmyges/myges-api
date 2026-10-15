@@ -1,0 +1,79 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "project_id": 24101,
+      "teacher_id": 1000000001,
+      "author": "LOVELACE Ada",
+      "name": "TP noté : pare-feu",
+      "update_date": 1789718400000,
+      "update_user": "LOVELACE Ada",
+      "course_name": "T1 - Réseaux avancés",
+      "discipline_id": 216001,
+      "project_files": null,
+      "is_draft": false,
+      "project_type_id": 2,
+      "project_computing_tools": "Proxmox VE",
+      "project_create_date": 1788854400000,
+      "project_detail_plan": "Plan détaillé.",
+      "project_hearing_presentation": null,
+      "project_max_student_group": 4,
+      "project_min_student_group": 2,
+      "project_personal_work": 20,
+      "project_presentation_duration": 15,
+      "project_ref_books": "",
+      "project_teaching_goals": "Objectifs pédagogiques.",
+      "project_type_group": "Libre",
+      "project_type_presentation": null,
+      "project_type_presentation_details": null,
+      "project_type_subject": "Imposé",
+      "rc_id": 500001,
+      "trimester_id": 21,
+      "year": 2026,
+      "groups": [],
+      "steps": [
+        {
+          "psp_id": 61001,
+          "psp_type": "Rendu final",
+          "psp_desc": "Dépôt du rapport.",
+          "psp_limit_date": 1794902400000,
+          "pro_id": 24001,
+          "psp_number": 1,
+          "files": [
+            {
+              "psf_id": 88001,
+              "psf_desc": "Rapport final",
+              "psf_begin_upload": 1792000000000,
+              "psf_end_upload": 1792000005000,
+              "psf_file": "XyZ987.pdf",
+              "psf_role_user": "Etudiant",
+              "psf_file_size": 204800,
+              "psf_file_hash": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "psf_file_type": "application/pdf",
+              "psp_id": 61001,
+              "pgr_id": 520001,
+              "u_id": 100001,
+              "psf_name": "rapport.pdf",
+              "links": []
+            }
+          ],
+          "links": []
+        },
+        {
+          "psp_id": 61002,
+          "psp_type": "Soutenance",
+          "psp_desc": "Passage à l'oral.",
+          "psp_limit_date": null,
+          "pro_id": 24001,
+          "psp_number": 2,
+          "files": null,
+          "links": []
+        }
+      ],
+      "project_group_logs": null,
+      "links": []
+    }
+  ],
+  "links": []
+}

@@ -1,0 +1,39 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "oc_id": 610001,
+      "label": "Chapitre 1 - Introduction",
+      "extension": ".pdf",
+      "type": "cours",
+      "category": "",
+      "file": null,
+      "teacher_name": null,
+      "update_date": 1792137600000,
+      "links": [
+        {
+          "rel": "url",
+          "href": "https://ges-dl.kordis.fr/private/exemple-jeton-1"
+        }
+      ]
+    },
+    {
+      "oc_id": 610002,
+      "label": "TP1_sources",
+      "extension": ".zip",
+      "type": "cours",
+      "category": "",
+      "file": null,
+      "teacher_name": null,
+      "update_date": 1791532800000,
+      "links": [
+        {
+          "rel": "url",
+          "href": "https://ges-dl.kordis.fr/private/exemple-jeton-2"
+        }
+      ]
+    }
+  ],
+  "links": []
+}

@@ -1,0 +1,12 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": {
+    "timestamp": 1792310400000,
+    "status": 404,
+    "error": "Not Found",
+    "message": "",
+    "path": "/me/2026/documents"
+  },
+  "links": []
+}

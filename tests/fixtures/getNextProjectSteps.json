@@ -1,0 +1,20 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "course_name": "T1 - Réseaux avancés",
+      "group_id": 520001,
+      "pro_id": 24001,
+      "pro_name": "Mise en place d'un cluster Proxmox",
+      "psp_desc": "Dépôt du rapport.",
+      "psp_id": 61001,
+      "psp_limit_date": 1794902400000,
+      "psp_number": 1,
+      "psp_type": "Rendu final",
+      "type": "project",
+      "links": []
+    }
+  ],
+  "links": []
+}

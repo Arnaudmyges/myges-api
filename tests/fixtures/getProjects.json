@@ -1,0 +1,135 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "project_id": 24001,
+      "teacher_id": 1000000001,
+      "author": "LOVELACE Ada",
+      "name": "Mise en place d'un cluster Proxmox",
+      "update_date": 1789718400000,
+      "update_user": "LOVELACE Ada",
+      "course_name": "T1 - Réseaux avancés",
+      "discipline_id": 216001,
+      "project_files": [
+        {
+          "links": [],
+          "pf_id": 9001,
+          "pf_title": "Sujet",
+          "pf_file": "AbCdEf123.pdf",
+          "pf_crea_date": 1789718400000,
+          "pro_id": 24001
+        }
+      ],
+      "is_draft": false,
+      "project_type_id": 1,
+      "project_computing_tools": "Proxmox VE",
+      "project_create_date": 1788854400000,
+      "project_detail_plan": "Plan détaillé.",
+      "project_hearing_presentation": "Soutenance orale.",
+      "project_max_student_group": 4,
+      "project_min_student_group": 2,
+      "project_personal_work": 20,
+      "project_presentation_duration": 15,
+      "project_ref_books": "",
+      "project_teaching_goals": "Objectifs pédagogiques.",
+      "project_type_group": "Groupe",
+      "project_type_presentation": "Oral",
+      "project_type_presentation_details": "",
+      "project_type_subject": "Imposé",
+      "rc_id": 500001,
+      "trimester_id": 21,
+      "year": 2026,
+      "groups": [
+        {
+          "links": [],
+          "group_name": "Groupe 1",
+          "date_presentation": null,
+          "project_group_id": 520001,
+          "project_id": 24001,
+          "subject_id": 35001,
+          "subject_validated": true,
+          "teacher_comment": null,
+          "teacher_intern_comment": null,
+          "project_group_students": [
+            {
+              "name": "EXEMPLE",
+              "firstname": "Camille",
+              "promotion": "BCH_SE3_000",
+              "option": "SRC",
+              "classe": "3ESGI SRC CL A",
+              "links": [],
+              "u_id": 100001
+            }
+          ]
+        },
+        {
+          "links": [],
+          "group_name": "Groupe 2",
+          "date_presentation": null,
+          "project_group_id": 520002,
+          "project_id": 24001,
+          "subject_id": 35001,
+          "subject_validated": false,
+          "teacher_comment": null,
+          "teacher_intern_comment": null,
+          "project_group_students": null
+        }
+      ],
+      "steps": [
+        {
+          "psp_id": 61001,
+          "psp_type": "Rendu final",
+          "psp_desc": "Dépôt du rapport.",
+          "psp_limit_date": 1794902400000,
+          "pro_id": 24001,
+          "psp_number": 1,
+          "files": [
+            {
+              "psf_id": 88001,
+              "psf_desc": "Rapport final",
+              "psf_begin_upload": 1792000000000,
+              "psf_end_upload": 1792000005000,
+              "psf_file": "XyZ987.pdf",
+              "psf_role_user": "Etudiant",
+              "psf_file_size": 204800,
+              "psf_file_hash": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "psf_file_type": "application/pdf",
+              "psp_id": 61001,
+              "pgr_id": 520001,
+              "u_id": 100001,
+              "psf_name": "rapport.pdf",
+              "links": []
+            }
+          ],
+          "links": []
+        },
+        {
+          "psp_id": 61002,
+          "psp_type": "Soutenance",
+          "psp_desc": "Passage à l'oral.",
+          "psp_limit_date": null,
+          "pro_id": 24001,
+          "psp_number": 2,
+          "files": null,
+          "links": []
+        }
+      ],
+      "project_group_logs": [
+        {
+          "links": [],
+          "pgl_id": 77001,
+          "pgl_author": "EXEMPLE Camille",
+          "pgl_role_user": "Etudiant",
+          "pgl_describe": "a rejoint le groupe",
+          "pgl_date": 1790582400000,
+          "pgl_type_action": "join",
+          "user_id": 100001,
+          "pgr_id": 520001
+        }
+      ],
+      "links": []
+    }
+  ],
+  "links": []
+}

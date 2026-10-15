@@ -1,0 +1,13 @@
+{
+  "response_code": 1,
+  "version": "1",
+  "exception": "Bad Request",
+  "result": {
+    "timestamp": 1792310400000,
+    "status": 400,
+    "error": "Bad Request",
+    "message": "",
+    "path": "/me/agenda"
+  },
+  "links": []
+}

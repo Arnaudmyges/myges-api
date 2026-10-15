@@ -1,0 +1,16 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "partner_id": 301,
+      "name": "Partenaire Exemple",
+      "small_image_url": "https://www.example.org/s.png",
+      "medium_image_url": "https://www.example.org/m.png",
+      "link": "https://www.example.org",
+      "content": null,
+      "links": []
+    }
+  ],
+  "links": []
+}

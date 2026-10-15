@@ -1,0 +1,20 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "event_id": 4501,
+      "event_title": "Afterwork de rentrée",
+      "event_date": 1792569600000,
+      "start_subscription_date": 1791705600000,
+      "end_subscription_date": 1792483200000,
+      "location": "Campus 1",
+      "event_type": "Evénement",
+      "description": null,
+      "organizer": "BDE",
+      "is_participant_subscribed": false,
+      "links": []
+    }
+  ],
+  "links": []
+}

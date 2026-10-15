@@ -1,0 +1,26 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "name": "3ESGI SRC CL A",
+      "description": "3ESGI SRC Classe 1",
+      "promotion": "BCH_SE3_000",
+      "school": "ESGI",
+      "year": 2026,
+      "trimester": 21,
+      "puid": 20001,
+      "links": [
+        {
+          "rel": "self",
+          "href": "https://api.kordis.fr/me/classes/20001"
+        },
+        {
+          "rel": "students",
+          "href": "https://api.kordis.fr/me/classes/20001/students"
+        }
+      ]
+    }
+  ],
+  "links": []
+}

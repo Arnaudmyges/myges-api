@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>myGES API — Swagger</title>
+  <meta name="description" content="Spécification OpenAPI non officielle de l'API myGES / Kordis.">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css">
+  <style>
+    body { margin: 0; background: #fafafa; }
+    .banner { font: 14px/1.5 system-ui, sans-serif; padding: 10px 16px; background: #fff7e0; border-bottom: 1px solid #f0d58a; }
+    .banner a { color: inherit; }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    Projet <strong>non officiel</strong>, sans lien avec Kordis ni le Réseau GES.
+    Pour « Try it out » : <code>myges token</code>, puis <strong>Authorize → bearerAuth</strong>.
+    Version lisible : <a href="redoc.html">Redoc</a> · Source : <a href="openapi.yaml">openapi.yaml</a>
+  </div>
+  <div id="swagger-ui"></div>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: "openapi.yaml",
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      persistAuthorization: true,
+      displayRequestDuration: true,
+      docExpansion: "list",
+      filter: true,
+      tryItOutEnabled: false,
+      // Les endpoints d'écriture ne sont pas vérifiés : pas de bouton « Try it out ».
+      supportedSubmitMethods: ["get"],
+    });
+  </script>
+</body>
+</html>

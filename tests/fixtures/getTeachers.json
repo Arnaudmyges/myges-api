@@ -1,0 +1,25 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "uid": 1000000001,
+      "firstname": "Ada",
+      "lastname": "LOVELACE",
+      "email": "alovelace@example.org",
+      "civility": null,
+      "profile_type": null,
+      "links": [
+        {
+          "rel": "self",
+          "href": "https://api.kordis.fr/me/teachers/1000000001"
+        },
+        {
+          "rel": "photo",
+          "href": "https://ges-dl.kordis.fr/public/exemple-photo-signee"
+        }
+      ]
+    }
+  ],
+  "links": []
+}

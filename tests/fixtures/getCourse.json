@@ -1,0 +1,26 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": {
+    "rc_id": 500001,
+    "name": "T1 - Réseaux avancés",
+    "promotion": "3 ESGI - SRC",
+    "promotion_level": null,
+    "promotion_type": null,
+    "teacher": "Ada LOVELACE",
+    "nb_students": 28,
+    "trimester": "S1",
+    "year": 2026,
+    "teacher_id": 1000000001,
+    "student_group_id": 70001,
+    "_links": {
+      "self": {
+        "href": "https://api.kordis.fr/me/courses/500001"
+      },
+      "teacher": {
+        "href": "https://api.kordis.fr/me/teachers/1000000001"
+      }
+    }
+  },
+  "links": []
+}

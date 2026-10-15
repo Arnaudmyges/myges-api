@@ -1,0 +1,26 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": {
+    "ne_id": 4001,
+    "title": "Journée portes ouvertes",
+    "author": "Service communication",
+    "summary": null,
+    "text": null,
+    "html": "<p>Contenu de l'actualité.</p>",
+    "date": 1792224000000,
+    "update_date": 1792224000000,
+    "_links": {
+      "self": {
+        "href": "https://api.kordis.fr/me/news/4001"
+      },
+      "url": {
+        "href": "https://www.example.org/actu"
+      },
+      "photo": {
+        "href": "https://ges-dl.kordis.fr/public/exemple-photo-signee"
+      }
+    }
+  },
+  "links": []
+}

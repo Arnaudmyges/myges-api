@@ -1,0 +1,47 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": {
+    "content": [
+      {
+        "ba_id": 1201,
+        "display_order": 1,
+        "title": "Inscriptions aux associations",
+        "description": null,
+        "author": "Vie étudiante",
+        "html": null,
+        "image": "https://www.example.org/banniere.png",
+        "begin_date": 1791446400000,
+        "end_date": 1793174400000,
+        "url": "https://www.example.org",
+        "links": []
+      }
+    ],
+    "pageable": {
+      "sort": {
+        "sorted": false,
+        "unsorted": true,
+        "empty": true
+      },
+      "page_size": 20,
+      "page_number": 0,
+      "offset": 0,
+      "paged": true,
+      "unpaged": false
+    },
+    "total_pages": 1,
+    "total_elements": 1,
+    "last": true,
+    "number": 0,
+    "size": 20,
+    "number_of_elements": 1,
+    "sort": {
+      "sorted": false,
+      "unsorted": true,
+      "empty": true
+    },
+    "first": true,
+    "empty": false
+  },
+  "links": []
+}

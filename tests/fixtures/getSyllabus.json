@@ -1,0 +1,88 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "syllabus_id": 80001,
+      "rc_id": 500001,
+      "cr_id": 91001,
+      "promo_id": 4001,
+      "school_id": 1,
+      "year": 2026,
+      "nextyear": 2027,
+      "code": "RES-301",
+      "syllabus_name": "Réseaux avancés",
+      "course_name": "T1 - Réseaux avancés",
+      "formation": "3A SRC",
+      "tri_name": "Semestre 1",
+      "tri_describe": "S1",
+      "coef": 3.0,
+      "ects": 4.0,
+      "hours_per_week": 3,
+      "personal_work": 20,
+      "exam_duration": 120,
+      "teacher_id": 1000000001,
+      "teacher_firstname": "Ada",
+      "teacher_lastname": "LOVELACE",
+      "resp_peda_firstname": "Grace",
+      "resp_peda_lastname": "HOPPER",
+      "resp_email": "pedagogie@example.org",
+      "asso_firstname": null,
+      "asso_lastname": null,
+      "teaching_goals": "Concevoir un réseau d'entreprise.",
+      "teaching_method": "Cours et TP.",
+      "prerequisite": "Bases TCP/IP.",
+      "detail_plan": "Routage, VLAN, VPN.",
+      "computing_tools": "GNS3",
+      "evaluation_type": "Contrôle continu + examen",
+      "evaluation_criteria": "Exactitude et justification.",
+      "allowed_docs": false,
+      "validation": true,
+      "books_reference": "RFC 1918.",
+      "other_reference": null,
+      "cyberlibris_reference": null,
+      "crossknowledge_reference": null,
+      "create_date": 1787126400000,
+      "control_types": [
+        {
+          "evaluation_type_id": 1,
+          "evaluation_label": "Examen écrit",
+          "links": []
+        }
+      ],
+      "seance_details": [
+        {
+          "number": 1,
+          "content": "Rappels et routage statique",
+          "homework": null,
+          "ref": null,
+          "eval": null,
+          "links": [],
+          "syl_id": 80001,
+          "cont_id": 95001
+        },
+        {
+          "number": 2,
+          "content": "VLAN et trunking",
+          "homework": "Lire le chapitre 2",
+          "ref": "Support chapitre 2",
+          "eval": "QCM",
+          "links": [],
+          "syl_id": 80001,
+          "cont_id": 95002
+        }
+      ],
+      "skills": [
+        {
+          "comp_id": 97001,
+          "syl_id": 80001,
+          "comp_label": "Administrer un réseau",
+          "ti_label": "Bloc 1 - Infrastructure",
+          "links": []
+        }
+      ],
+      "links": []
+    }
+  ],
+  "links": []
+}

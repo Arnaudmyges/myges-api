@@ -1,0 +1,17 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "date": 1791705600000,
+      "course_name": "T1 - Réseaux avancés",
+      "justified": false,
+      "trimester": 21,
+      "trimester_name": "Semestre 1",
+      "type": "m",
+      "year": 2026,
+      "links": []
+    }
+  ],
+  "links": []
+}

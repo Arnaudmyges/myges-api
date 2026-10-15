@@ -1,0 +1,45 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "coef": 3.0,
+      "ects": 4.0,
+      "name": "T1 - Réseaux avancés",
+      "teacher": "Ada LOVELACE",
+      "trimester": "Semestre 1",
+      "year": 2026,
+      "links": [],
+      "has_documents": true,
+      "has_grades": true,
+      "nb_students": 28,
+      "rc_id": 500001,
+      "school_id": 1,
+      "student_group_id": 70001,
+      "student_group_name": "3A SRC Groupe 1",
+      "syllabus_id": 80001,
+      "teacher_id": 1000000001,
+      "trimester_id": 21
+    },
+    {
+      "coef": 1.0,
+      "ects": 2.0,
+      "name": "T1 - Anglais, niveau C1",
+      "teacher": "Alan TURING",
+      "trimester": "Semestre 1",
+      "year": 2026,
+      "links": [],
+      "has_documents": false,
+      "has_grades": false,
+      "nb_students": 24,
+      "rc_id": 500002,
+      "school_id": 1,
+      "student_group_id": 70002,
+      "student_group_name": "Anglais C1",
+      "syllabus_id": null,
+      "teacher_id": 1000000002,
+      "trimester_id": 21
+    }
+  ],
+  "links": []
+}

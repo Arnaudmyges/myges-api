@@ -1,0 +1,21 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": {
+    "uid": 100002,
+    "firstname": "Dominique",
+    "lastname": "TEST",
+    "email": "d.test@myskolae.fr",
+    "civility": null,
+    "profile_type": null,
+    "_links": {
+      "self": {
+        "href": "https://api.kordis.fr/me/students/100002"
+      },
+      "photo": {
+        "href": "https://ges-dl.kordis.fr/public/exemple-photo-signee"
+      }
+    }
+  },
+  "links": []
+}

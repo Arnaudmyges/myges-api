@@ -1,0 +1,58 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": {
+    "uid": 100001,
+    "student_id": "2024-ESGI-100001",
+    "ine": "000000000AA",
+    "civility": "M",
+    "firstname": "Camille",
+    "name": "EXEMPLE",
+    "maiden_name": null,
+    "birthday": 946684800000,
+    "birthplace": "Paris",
+    "birth_country": "France",
+    "address1": "1 rue de l'Exemple",
+    "address2": null,
+    "city": "PARIS",
+    "zipcode": "75000",
+    "country": "France",
+    "telephone": null,
+    "mobile": "600000000",
+    "email": "c.exemple@myskolae.fr",
+    "nationality": "française",
+    "personal_mail": "camille@example.org",
+    "mailing": null,
+    "emergency_contact": {
+      "emergency_id": 100001,
+      "type": null,
+      "type_details": null,
+      "firstname": null,
+      "name": null,
+      "telephone": null,
+      "mobile": null,
+      "work_phone": null
+    },
+    "get_need_to_be_removed_from_edusign": null,
+    "_links": {
+      "self": {
+        "href": "https://api.kordis.fr/me/profile"
+      },
+      "years": {
+        "href": "https://api.kordis.fr/me/years"
+      },
+      "agenda": {
+        "href": "https://api.kordis.fr/me/agenda?start={start}&end={end}",
+        "templated": true
+      },
+      "grades": {
+        "href": "https://api.kordis.fr/me/{year}/grades",
+        "templated": true
+      },
+      "photo": {
+        "href": "https://ges-dl.kordis.fr/public/exemple-photo-signee"
+      }
+    }
+  },
+  "links": []
+}

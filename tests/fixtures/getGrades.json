@@ -1,0 +1,54 @@
+{
+  "response_code": 0,
+  "version": "1",
+  "result": [
+    {
+      "course": "T1 - Réseaux avancés",
+      "code": "",
+      "grades": [
+        14.5,
+        17.0
+      ],
+      "bonus": 0.0,
+      "exam": 15.0,
+      "average": 15.25,
+      "trimester": 21,
+      "trimester_name": "Semestre 1",
+      "year": 2026,
+      "rc_id": 500001,
+      "ects": "4.0",
+      "coef": "3.0",
+      "teacher_civility": "Mme",
+      "teacher_first_name": "Ada",
+      "teacher_last_name": "LOVELACE",
+      "absences": 1,
+      "lates": 0,
+      "letter_mark": "A-",
+      "ccaverage": 15.75,
+      "links": []
+    },
+    {
+      "course": "T1 - Anglais, niveau C1",
+      "code": "",
+      "grades": [],
+      "bonus": 0.0,
+      "exam": null,
+      "average": null,
+      "trimester": 21,
+      "trimester_name": "Semestre 1",
+      "year": 2026,
+      "rc_id": 500002,
+      "ects": "N.C.",
+      "coef": "N.C.",
+      "teacher_civility": "M.",
+      "teacher_first_name": "Alan",
+      "teacher_last_name": "TURING",
+      "absences": 0,
+      "lates": 0,
+      "letter_mark": "F",
+      "ccaverage": 0.0,
+      "links": []
+    }
+  ],
+  "links": []
+}

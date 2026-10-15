@@ -1,0 +1,1792 @@
+openapi: 3.1.0
+
+info:
+  title: myGES / Kordis API (non officielle)
+  version: "1.0.0"
+  summary: Spécification reconstruite de l'API utilisée par l'application mobile myGES.
+  description: |
+    Spécification **non officielle** de l'API REST `api.kordis.fr`, utilisée par
+    l'application mobile myGES (Réseau GES : ESGI, ECITV, PPA, ...). Ni Kordis ni le
+    Réseau GES ne publient de documentation : tout ce qui suit a été observé en
+    interrogeant l'API réelle avec un compte étudiant.
+
+    ## Statut de vérification
+
+    Chaque opération porte une extension `x-verified` :
+
+    - une date (`2026-10-15`) : réponse réelle capturée et schéma vérifié à cette date ;
+    - `false` : endpoint repris de clients communautaires, **jamais appelé** par ce
+      projet (cas des endpoints en écriture, volontairement non testés).
+
+    ## Authentification
+
+    1. `GET https://authentication.kordis.fr/oauth/authorize?response_type=token&client_id=skolae-app`
+       avec `Authorization: Basic base64(identifiant:mot_de_passe)`.
+    2. Kordis répond `302` vers `comreseaugesskolae:/oauth2redirect#access_token=...&expires_in=...`.
+       Le token est dans le **fragment** de l'en-tête `Location` ; il ne faut pas suivre la
+       redirection.
+    3. Utiliser `Authorization: Bearer <access_token>` sur `api.kordis.fr`.
+
+    Le token vit environ 6,5 jours (`expires_in` ≈ 560 000 s) et il n'y a **pas de refresh
+    token** : à l'expiration, il faut se ré-authentifier avec les identifiants.
+
+    Pour essayer l'API depuis cette page : `myges token` (CLI du dépôt) affiche un token
+    valide, à coller dans **Authorize → bearerAuth**. L'API renvoie l'en-tête CORS de
+    l'origine appelante pour les `GET`, donc « Try it out » fonctionne depuis le navigateur.
+    Le flow de login lui-même ne peut pas tourner dans un navigateur : la redirection vers
+    un scheme applicatif est opaque pour `fetch`.
+
+    ## Filtrage du User-Agent
+
+    Un pare-feu applicatif renvoie `403` (page HTML) à certains clients : requête sans
+    `User-Agent` sur `authentication.kordis.fr`, et User-Agent `python-requests/*` sur les
+    deux domaines. `curl`, `python-httpx` ou un User-Agent explicite passent.
+
+    ## Conventions de l'API
+
+    - **Enveloppe** : toutes les réponses JSON sont de la forme
+      `{"response_code": 0, "version": "1", "result": ..., "links": []}`.
+    - **Dates** : entiers en **millisecondes** depuis l'epoch Unix (UTC).
+    - **Années** : `{year}` est l'année de *début* de l'année scolaire (2026 = 2026-2027).
+      Les valeurs disponibles sont données par `GET /me/years`.
+    - **Liste vide** : certains endpoints renvoient `204 No Content` (corps vide) au lieu
+      de `[]`, par exemple `/me/{year}/absences` sans absence ou une année inconnue.
+    - **HAL** : les ressources unitaires (`application/hal+json`) portent un objet
+      `_links` ; les éléments de liste (`application/json`) un tableau `links`.
+    - **Erreurs** : les 4xx applicatives sont dans l'enveloppe JSON (`result` décrit
+      l'erreur à la manière de Spring Boot). Les 401 sont renvoyées en **XML** par la
+      couche OAuth.
+    - **Pagination** (`/me/news`, `/me/news/banners`) : objet `Page` de Spring Data,
+      paramètres `page` (à partir de 0) et `size`.
+
+    ## Piège : `/me/{x}/...` est ambigu
+
+    Certaines routes prennent une **année** (`/me/2026/grades`), d'autres un **identifiant de
+    matière** `rc_id` (`/me/500001/files`, `/me/500001/syllabus`), sous la même forme de
+    chemin. Une année passée à une route `rc_id` ne renvoie pas d'erreur claire :
+    `/me/2026/syllabus` répond `200 []` et `/me/2026/files` répond `400`. L'inverse renvoie
+    `204`.
+
+    ## Routes connues mais inaccessibles à un compte étudiant
+
+    | Route | Réponse |
+    |---|---|
+    | `GET /me/{year}/students` | `418` « Cette ressource n'est pas utilisable par ce rôle utilisateur » |
+    | `GET /me/campus/{campusId}/rooms` | `418`, même message |
+    | `GET /planning/campus`, `/planning/campus/{id}`, `/planning/campus/{id}/rooms`, `/planning/rooms` | `401` en JSON : un autre scope que `account` est requis |
+
+    ## Ce qui n'existe pas (côté API)
+
+    Les documents administratifs (certificats de scolarité, documents d'admission), les
+    factures, les points OPEN et l'annuaire filtrable ne sont exposés que par le site web
+    `myges.fr` (JSF, session CAS), et pas par cette API.
+
+    ## Avertissement
+
+    Projet indépendant, sans lien avec Kordis ni le Réseau GES. L'API peut changer sans
+    préavis. Les données renvoyées (profil, notes, camarades de classe) sont personnelles :
+    ne les publiez pas.
+  license:
+    name: MIT
+    identifier: MIT
+  contact:
+    name: myges-api
+    url: https://github.com/Arnaudmyges/myges-api
+
+servers:
+  - url: https://api.kordis.fr
+    description: Production
+
+tags:
+  - name: Authentification
+    description: Obtention du token (serveur `authentication.kordis.fr`).
+  - name: Profil
+    description: Compte de l'étudiant connecté.
+  - name: Agenda
+    description: Emploi du temps.
+  - name: Scolarité
+    description: Matières, notes, absences.
+  - name: Personnes
+    description: Intervenants, classes, camarades.
+  - name: Projets
+    description: Projets de groupe, étapes, messagerie.
+  - name: Vie de campus
+    description: Actualités, bannières, événements, partenaires.
+
+security:
+  - bearerAuth: []
+  - kordisOAuth: [account]
+
+paths:
+
+  # ---------------------------------------------------------------- Authentification
+
+  /oauth/authorize:
+    servers:
+      - url: https://authentication.kordis.fr
+    get:
+      tags: [Authentification]
+      operationId: authorize
+      summary: Obtenir un access token
+      description: |
+        Flow OAuth 2.0 *implicit grant* détourné en Basic Auth. Le token est renvoyé dans le
+        fragment de l'URL de redirection, à lire dans l'en-tête `Location` **sans suivre**
+        la redirection.
+
+        Exemple de `Location` :
+        `comreseaugesskolae:/oauth2redirect#access_token=0b0e…&token_type=bearer&expires_in=560063&scope=account`
+
+        Tant qu'un token est actif, une nouvelle authentification renvoie **le même token**
+        avec un `expires_in` réduit d'autant : se ré-authentifier ne prolonge pas sa durée de vie.
+      x-verified: "2026-10-15"
+      security:
+        - basicAuth: []
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema: { type: string, const: token }
+        - name: client_id
+          in: query
+          required: true
+          schema: { type: string, const: skolae-app }
+      responses:
+        "302":
+          description: Identifiants valides. Le token est dans le fragment de `Location`.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+                examples:
+                  - "comreseaugesskolae:/oauth2redirect#access_token=0b0e5c3a-0000-4000-8000-000000000000&token_type=bearer&expires_in=560063&scope=account"
+        "401":
+          description: "Identifiants invalides (page HTML, en-tête `WWW-Authenticate: Basic`)."
+          headers:
+            WWW-Authenticate:
+              schema: { type: string, examples: ['Basic realm="Realm"'] }
+          content:
+            text/html:
+              schema: { type: string }
+        "403":
+          description: |
+            Requête rejetée par le pare-feu applicatif, typiquement sans en-tête `User-Agent`.
+            Voir « Filtrage du User-Agent » dans l'introduction.
+          content:
+            text/html:
+              schema: { type: string }
+
+  # ---------------------------------------------------------------- Profil
+
+  /me/profile:
+    get:
+      tags: [Profil]
+      operationId: getProfile
+      summary: Profil de l'étudiant connecté
+      x-verified: "2026-10-15"
+      responses:
+        "200":
+          description: Profil complet.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/years:
+    get:
+      tags: [Profil]
+      operationId: getYears
+      summary: Années scolaires disponibles
+      description: Années de début d'année scolaire, de la plus récente à la plus ancienne.
+      x-verified: "2026-10-15"
+      responses:
+        "200":
+          description: Liste d'années.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { type: integer, examples: [2026] }
+              example:
+                response_code: 0
+                version: "1"
+                result: [2026, 2025, 2024]
+                links: []
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ---------------------------------------------------------------- Agenda
+
+  /me/agenda:
+    get:
+      tags: [Agenda]
+      operationId: getAgenda
+      summary: Emploi du temps sur une période
+      description: |
+        Créneaux dont le début est compris entre `start` et `end`. Les deux paramètres sont
+        obligatoires (`400` sinon). Des fenêtres de plusieurs semaines fonctionnent.
+      x-verified: "2026-10-15"
+      parameters:
+        - name: start
+          in: query
+          required: true
+          description: Début de la fenêtre, epoch en millisecondes.
+          schema: { $ref: "#/components/schemas/EpochMillis" }
+        - name: end
+          in: query
+          required: true
+          description: Fin de la fenêtre, epoch en millisecondes.
+          schema: { $ref: "#/components/schemas/EpochMillis" }
+      responses:
+        "200":
+          description: Créneaux de la période.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/AgendaEvent" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ---------------------------------------------------------------- Scolarité
+
+  /me/{year}/courses:
+    get:
+      tags: [Scolarité]
+      operationId: getCourses
+      summary: Matières de l'année
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/Year"
+      responses:
+        "200":
+          description: Matières suivies.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/Course" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/courses/{rcId}:
+    get:
+      tags: [Scolarité]
+      operationId: getCourse
+      summary: Détail d'une matière
+      description: Moins de champs que l'élément de `/me/{year}/courses`, mais ajoute `promotion`.
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/RcId"
+      responses:
+        "200":
+          description: Matière.
+          content:
+            application/hal+json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result: { $ref: "#/components/schemas/CourseDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /me/{year}/grades:
+    get:
+      tags: [Scolarité]
+      operationId: getGrades
+      summary: Notes de l'année
+      description: Une entrée par matière, avec notes de contrôle continu, examen et moyenne.
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/Year"
+      responses:
+        "200":
+          description: Notes par matière.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/Grade" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/{year}/absences:
+    get:
+      tags: [Scolarité]
+      operationId: getAbsences
+      summary: Absences de l'année
+      description: Renvoie `204` (corps vide) quand il n'y a aucune absence.
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/Year"
+      responses:
+        "200":
+          description: Absences.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/Absence" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/{rcId}/syllabus:
+    get:
+      tags: [Scolarité]
+      operationId: getSyllabus
+      summary: Syllabus d'une matière
+      description: |
+        Fiche pédagogique : objectifs, plan séance par séance, modalités d'évaluation,
+        compétences et bibliographie. `result` est un tableau de **0 ou 1** élément (vide si
+        l'intervenant n'a pas rempli de syllabus).
+
+        ⚠️ Prend un `rc_id` et non une année : `/me/2026/syllabus` répond `200 []`.
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/RcId"
+      responses:
+        "200":
+          description: Syllabus.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        maxItems: 1
+                        items: { $ref: "#/components/schemas/Syllabus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/{rcId}/files:
+    get:
+      tags: [Scolarité]
+      operationId: getCourseFiles
+      summary: Supports de cours d'une matière
+      description: |
+        Documents déposés par l'intervenant (onglet « Supports de cours » de myGES). La liste
+        est non vide exactement quand `has_documents` vaut `true` dans `/me/{year}/courses`.
+
+        Le lien `url` (`ges-dl.kordis.fr/private/…`) exige une **session web CAS** : le
+        Bearer n'y est pas accepté. Pour télécharger avec le token de l'API, utiliser
+        `GET /me/{rcId}/files/{fileId}`.
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/RcId"
+      responses:
+        "200":
+          description: Supports, du plus récent au plus ancien.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/CourseFile" }
+        "400":
+          description: Matière à laquelle l'étudiant n'est pas inscrit (« Vous n'avez pas accès à cette ressource »).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/{rcId}/files/{fileId}:
+    get:
+      tags: [Scolarité]
+      operationId: downloadCourseFile
+      summary: Télécharger un support de cours
+      description: |
+        Renvoie le **contenu brut** du fichier, octet pour octet identique au téléchargement
+        depuis le site. Le serveur annonce `Content-Type: application/json` quel que soit le
+        format, sans `Content-Disposition` : le nom et l'extension sont à reprendre de
+        `label` et `extension` dans la liste.
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/RcId"
+        - name: fileId
+          in: path
+          required: true
+          description: "`oc_id` du support."
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Contenu du fichier (en-tête `Content-Type` erroné).
+          content:
+            application/json:
+              schema: { type: string, contentMediaType: application/octet-stream }
+            application/octet-stream:
+              schema: { type: string, contentMediaType: application/octet-stream }
+        "400":
+          description: Matière à laquelle l'étudiant n'est pas inscrit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: "`fileId` inconnu (le serveur répond 500, pas 404)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  # ---------------------------------------------------------------- Personnes
+
+  /me/{year}/teachers:
+    get:
+      tags: [Personnes]
+      operationId: getTeachers
+      summary: Intervenants de l'année
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/Year"
+      responses:
+        "200":
+          description: Intervenants.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/Person" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/teachers/{teacherId}:
+    get:
+      tags: [Personnes]
+      operationId: getTeacher
+      summary: Détail d'un intervenant
+      x-verified: "2026-10-15"
+      parameters:
+        - name: teacherId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Intervenant.
+          content:
+            application/hal+json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result: { $ref: "#/components/schemas/PersonDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /me/{year}/classes:
+    get:
+      tags: [Personnes]
+      operationId: getClasses
+      summary: Classes de l'étudiant pour l'année
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/Year"
+      responses:
+        "200":
+          description: Classes.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/SchoolClass" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/classes/{classId}:
+    get:
+      tags: [Personnes]
+      operationId: getClass
+      summary: Détail d'une classe
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/ClassId"
+      responses:
+        "200":
+          description: Classe.
+          content:
+            application/hal+json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result: { $ref: "#/components/schemas/SchoolClassDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /me/classes/{classId}/students:
+    get:
+      tags: [Personnes]
+      operationId: getClassStudents
+      summary: Étudiants d'une classe
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/ClassId"
+      responses:
+        "200":
+          description: Étudiants.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/Person" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/students/{studentId}:
+    get:
+      tags: [Personnes]
+      operationId: getStudent
+      summary: Détail d'un étudiant
+      x-verified: "2026-10-15"
+      parameters:
+        - name: studentId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Étudiant.
+          content:
+            application/hal+json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result: { $ref: "#/components/schemas/PersonDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------------- Projets
+
+  /me/{year}/projects:
+    get:
+      tags: [Projets]
+      operationId: getProjects
+      summary: Projets de l'année
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/Year"
+      responses:
+        "200":
+          description: Projets, avec groupes, étapes, fichiers et historique.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/Project" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/{year}/practicals:
+    get:
+      tags: [Projets]
+      operationId: getPracticals
+      summary: Travaux pratiques de l'année
+      description: |
+        Rubrique « TP » de myGES. Même structure que les projets, avec `project_type_id = 2`
+        (contre `1` pour un projet) ; les champs de soutenance y sont souvent `null`. Le
+        détail d'un TP s'obtient avec `GET /me/projects/{projectId}`.
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/Year"
+      responses:
+        "200":
+          description: TP.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/Project" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/projects/{projectId}:
+    get:
+      tags: [Projets]
+      operationId: getProject
+      summary: Détail d'un projet
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Projet.
+          content:
+            application/hal+json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result: { $ref: "#/components/schemas/Project" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /me/nextProjectSteps:
+    get:
+      tags: [Projets]
+      operationId: getNextProjectSteps
+      summary: Prochaines échéances de projet
+      x-verified: "2026-10-15"
+      responses:
+        "200":
+          description: Échéances à venir.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/NextProjectStep" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/projectGroups/{groupId}/messages:
+    get:
+      tags: [Projets]
+      operationId: getProjectGroupMessages
+      summary: Messages d'un groupe de projet
+      description: |
+        Messagerie interne d'un groupe. Vide sur tous les groupes testés : le format des
+        messages n'a pas pu être observé.
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Messages (format des éléments non observé).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Projets]
+      operationId: sendProjectGroupMessage
+      summary: Envoyer un message au groupe
+      description: |
+        ⚠️ **Écriture, non vérifiée.** Repris de
+        [quantumsheep/myges-cli](https://github.com/quantumsheep/myges-cli). Le message est
+        visible par tout le groupe et l'intervenant.
+      x-verified: false
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectGroupId, message]
+              properties:
+                projectGroupId: { type: integer, format: int64 }
+                message: { type: string }
+      responses:
+        "200": { description: Message envoyé (format de réponse non observé). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/courses/{rcId}/projects/{projectId}/groups/{groupId}:
+    parameters:
+      - $ref: "#/components/parameters/RcId"
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/GroupId"
+    post:
+      tags: [Projets]
+      operationId: joinProjectGroup
+      summary: Rejoindre un groupe de projet
+      description: "⚠️ **Écriture, non vérifiée.** Repris de myges-cli."
+      x-verified: false
+      responses:
+        "200": { description: Groupe rejoint (format de réponse non observé). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Projets]
+      operationId: leaveProjectGroup
+      summary: Quitter un groupe de projet
+      description: "⚠️ **Écriture, non vérifiée.** Repris de myges-cli."
+      x-verified: false
+      responses:
+        "200": { description: Groupe quitté (format de réponse non observé). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ---------------------------------------------------------------- Vie de campus
+
+  /me/news:
+    get:
+      tags: [Vie de campus]
+      operationId: getNews
+      summary: Actualités (paginées)
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
+      responses:
+        "200":
+          description: Page d'actualités. Au-delà de la dernière page, `content` est vide.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        allOf:
+                          - $ref: "#/components/schemas/Page"
+                          - properties:
+                              content:
+                                type: array
+                                items: { $ref: "#/components/schemas/News" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/news/{newsId}:
+    get:
+      tags: [Vie de campus]
+      operationId: getNewsItem
+      summary: Détail d'une actualité
+      x-verified: "2026-10-15"
+      parameters:
+        - name: newsId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Actualité.
+          content:
+            application/hal+json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result: { $ref: "#/components/schemas/NewsDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /me/news/banners:
+    get:
+      tags: [Vie de campus]
+      operationId: getBanners
+      summary: Bannières de la page d'accueil (paginées)
+      x-verified: "2026-10-15"
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
+      responses:
+        "200":
+          description: Page de bannières.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        allOf:
+                          - $ref: "#/components/schemas/Page"
+                          - properties:
+                              content:
+                                type: array
+                                items: { $ref: "#/components/schemas/Banner" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/events:
+    get:
+      tags: [Vie de campus]
+      operationId: getEvents
+      summary: Événements du campus
+      description: Événements passés et à venir, avec état d'inscription de l'étudiant.
+      x-verified: "2026-10-15"
+      responses:
+        "200":
+          description: Événements.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/CampusEvent" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/events/{eventId}/subscribe:
+    post:
+      tags: [Vie de campus]
+      operationId: subscribeEvent
+      summary: S'inscrire à un événement
+      description: |
+        ⚠️ **Écriture, non vérifiée.** Existence établie par la réponse `405` à un `GET`
+        (en-tête `Allow: POST`) ; jamais appelée par ce projet. Corps et réponse inconnus.
+      x-verified: false
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Inscription enregistrée (format non observé). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/schools:
+    get:
+      tags: [Vie de campus]
+      operationId: getSchools
+      summary: Écoles de l'étudiant
+      x-verified: "2026-10-15"
+      responses:
+        "200":
+          description: Écoles.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/School" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/campus:
+    get:
+      tags: [Vie de campus]
+      operationId: getCampuses
+      summary: Campus du réseau
+      description: Adresses et coordonnées. Les liens `self` et `rooms` pointent vers `/planning/…`, inaccessible avec un token étudiant.
+      x-verified: "2026-10-15"
+      responses:
+        "200":
+          description: Campus.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/Campus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/partners:
+    get:
+      tags: [Vie de campus]
+      operationId: getPartners
+      summary: Partenaires de l'école
+      x-verified: "2026-10-15"
+      responses:
+        "200":
+          description: Partenaires.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      result:
+                        type: array
+                        items: { $ref: "#/components/schemas/Partner" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Token obtenu via `/oauth/authorize` (ou `myges token`).
+    kordisOAuth:
+      type: oauth2
+      description: |
+        Description formelle du flow. Inutilisable tel quel depuis Swagger UI (redirection
+        vers un scheme applicatif) : préférer `bearerAuth`.
+      flows:
+        implicit:
+          authorizationUrl: https://authentication.kordis.fr/oauth/authorize
+          scopes:
+            account: Accès au compte étudiant (seul scope observé).
+    basicAuth:
+      type: http
+      scheme: basic
+      description: Identifiants myGES, uniquement sur `/oauth/authorize`.
+
+  parameters:
+    Year:
+      name: year
+      in: path
+      required: true
+      description: Année de début de l'année scolaire (voir `GET /me/years`).
+      schema: { type: integer, examples: [2026] }
+    RcId:
+      name: rcId
+      in: path
+      required: true
+      description: Identifiant de matière (`rc_id`).
+      schema: { type: integer, format: int64 }
+    ClassId:
+      name: classId
+      in: path
+      required: true
+      description: Identifiant de classe (`puid`).
+      schema: { type: integer, format: int64 }
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      description: Identifiant de groupe de projet (`project_group_id`).
+      schema: { type: integer, format: int64 }
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Numéro de page, à partir de 0.
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      required: false
+      description: Taille de page.
+      schema: { type: integer, minimum: 1, default: 20 }
+
+  responses:
+    NoContent:
+      description: Aucun élément. Le corps est vide (et non un tableau vide).
+    BadRequest:
+      description: Paramètre manquant ou invalide (ex. `year` non numérique).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: Ressource ou route inconnue.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            response_code: 0
+            version: "1"
+            result:
+              timestamp: 1792070069084
+              status: 404
+              error: Not Found
+              message: ""
+              path: /me/2026/documents
+            links: []
+    Unauthorized:
+      description: Token absent, invalide ou expiré. Renvoyé en XML par la couche OAuth.
+      content:
+        application/xml:
+          schema: { type: string }
+          examples:
+            missing:
+              summary: Pas d'en-tête Authorization
+              value: "<UnauthorizedException><error>unauthorized</error><error_description>Full authentication is required to access this resource</error_description></UnauthorizedException>"
+            invalid:
+              summary: Token invalide ou expiré
+              value: "<InvalidTokenException><error>invalid_token</error><error_description>…</error_description></InvalidTokenException>"
+
+  schemas:
+
+    # ------------------------------------------------------------ Génériques
+
+    EpochMillis:
+      type: integer
+      format: int64
+      description: Instant en millisecondes depuis l'epoch Unix (UTC).
+      examples: [1792069200000]
+
+    Envelope:
+      type: object
+      description: Enveloppe commune à toutes les réponses JSON.
+      required: [response_code, version, result]
+      properties:
+        response_code:
+          type: integer
+          description: "`0` en cas de succès (et sur les 404), `1` sur les 400."
+        version: { type: string, examples: ["1"] }
+        result: {}
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/Link" }
+        exception:
+          type: string
+          description: Présent sur certaines erreurs (ex. `Bad Request`).
+
+    ErrorEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - properties:
+            result: { $ref: "#/components/schemas/ErrorDetail" }
+
+    ErrorDetail:
+      type: object
+      description: Corps d'erreur Spring Boot.
+      required: [status, error, path]
+      properties:
+        timestamp: { $ref: "#/components/schemas/EpochMillis" }
+        status: { type: integer }
+        error: { type: string }
+        message: { type: string }
+        path: { type: string }
+
+    Link:
+      type: object
+      description: Lien au format liste, sur les éléments de collection.
+      required: [rel, href]
+      properties:
+        rel: { type: string, examples: [self, photo, students] }
+        href: { type: string, format: uri }
+
+    HalLink:
+      type: object
+      required: [href]
+      properties:
+        href: { type: string }
+        templated: { type: boolean }
+
+    HalLinks:
+      type: object
+      description: Liens au format HAL, sur les ressources unitaires.
+      additionalProperties: { $ref: "#/components/schemas/HalLink" }
+
+    Links:
+      type: array
+      items: { $ref: "#/components/schemas/Link" }
+
+    Page:
+      type: object
+      description: Page Spring Data (`org.springframework.data.domain.Page`).
+      required: [content, number, size, total_pages, total_elements]
+      properties:
+        content: { type: array, items: {} }
+        pageable:
+          type: object
+          properties:
+            sort: { $ref: "#/components/schemas/Sort" }
+            page_size: { type: integer }
+            page_number: { type: integer }
+            offset: { type: integer }
+            paged: { type: boolean }
+            unpaged: { type: boolean }
+        total_pages: { type: integer }
+        total_elements: { type: integer }
+        last: { type: boolean }
+        first: { type: boolean }
+        empty: { type: boolean }
+        number: { type: integer, description: Numéro de la page courante. }
+        size: { type: integer }
+        number_of_elements: { type: integer }
+        sort: { $ref: "#/components/schemas/Sort" }
+
+    Sort:
+      type: object
+      properties:
+        sorted: { type: boolean }
+        unsorted: { type: boolean }
+        empty: { type: boolean }
+
+    # ------------------------------------------------------------ Profil
+
+    ProfileResponse:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - properties:
+            result: { $ref: "#/components/schemas/Profile" }
+
+    Profile:
+      type: object
+      required: [uid, firstname, name, email]
+      properties:
+        uid: { type: integer, format: int64, description: Identifiant utilisateur Kordis. }
+        student_id: { type: string, examples: ["2024-ESGI-123456"] }
+        ine: { type: [string, "null"], description: Identifiant national étudiant. }
+        civility: { type: [string, "null"], examples: [M, Mme] }
+        firstname: { type: string }
+        name: { type: string, description: Nom de famille. }
+        maiden_name: { type: [string, "null"] }
+        birthday: { oneOf: [{ $ref: "#/components/schemas/EpochMillis" }, { type: "null" }] }
+        birthplace: { type: [string, "null"] }
+        birth_country: { type: [string, "null"] }
+        address1: { type: [string, "null"] }
+        address2: { type: [string, "null"] }
+        city: { type: [string, "null"] }
+        zipcode: { type: [string, "null"] }
+        country: { type: [string, "null"] }
+        telephone: { type: [string, "null"] }
+        mobile: { type: [string, "null"] }
+        email: { type: string, description: Adresse scolaire. }
+        personal_mail: { type: [string, "null"] }
+        nationality: { type: [string, "null"] }
+        mailing: { type: [string, "null"] }
+        emergency_contact: { $ref: "#/components/schemas/EmergencyContact" }
+        get_need_to_be_removed_from_edusign:
+          type: [boolean, "null"]
+          description: Champ interne lié à Edusign (signature électronique). Toujours `null` observé.
+        _links:
+          description: |
+            Liens HAL vers les autres ressources du compte (`years`, `agenda`, `grades`,
+            `classes`, `courses`, `teachers`, `news`) et vers la photo (`photo`, URL
+            publique signée sur `ges-dl.kordis.fr`).
+          $ref: "#/components/schemas/HalLinks"
+
+    EmergencyContact:
+      type: object
+      properties:
+        emergency_id: { type: integer, format: int64 }
+        type: { type: [string, "null"] }
+        type_details: { type: [string, "null"] }
+        firstname: { type: [string, "null"] }
+        name: { type: [string, "null"] }
+        telephone: { type: [string, "null"] }
+        mobile: { type: [string, "null"] }
+        work_phone: { type: [string, "null"] }
+
+    # ------------------------------------------------------------ Agenda
+
+    AgendaEvent:
+      type: object
+      required: [reservation_id, start_date, end_date, name]
+      properties:
+        reservation_id: { type: integer, format: int64, description: Identifiant stable du créneau. }
+        name: { type: string, description: Intitulé (copie de l'intitulé de la matière pour un cours). }
+        type:
+          type: string
+          description: Nature du créneau.
+          examples: [Cours, Autre]
+        modality:
+          type: string
+          description: Modalité. Chaîne vide pour les créneaux non pédagogiques.
+          examples: [Présentiel, Distanciel, ""]
+        state: { type: string, examples: [PUBLISHED] }
+        start_date: { $ref: "#/components/schemas/EpochMillis" }
+        end_date: { $ref: "#/components/schemas/EpochMillis" }
+        teacher: { type: string, description: Nom de l'intervenant, ou chaîne vide. }
+        promotion: { type: string }
+        rooms:
+          type: [array, "null"]
+          description: Salles. `null` pour un cours à distance.
+          items: { $ref: "#/components/schemas/Room" }
+        discipline: { $ref: "#/components/schemas/Discipline" }
+        author: { type: integer, format: int64, description: Identifiant de l'auteur de la réservation. }
+        create_date: { oneOf: [{ $ref: "#/components/schemas/EpochMillis" }, { type: "null" }] }
+        comment: { type: [string, "null"] }
+        classes: { type: [array, "null"], items: {} }
+        prestation_type: { type: integer }
+        is_electronic_signature:
+          type: boolean
+          description: Émargement par signature électronique (Edusign).
+        links: { $ref: "#/components/schemas/Links" }
+
+    Room:
+      type: object
+      properties:
+        room_id: { type: integer, format: int64 }
+        name: { type: string }
+        floor: { type: string, examples: [RDC, 1er étage] }
+        campus: { type: string, examples: [NATION1, VOLTAIRE1] }
+        color: { type: string, examples: ["#FF6D01"], description: Couleur d'affichage. }
+        latitude: { type: string }
+        longitude: { type: string }
+        links: { $ref: "#/components/schemas/Links" }
+
+    Discipline:
+      type: object
+      description: |
+        Matière rattachée au créneau. Sur l'agenda, `coef`, `ects`, `has_documents`,
+        `has_grades` et `syllabus_id` sont toujours `null` : utiliser `/me/{year}/courses`.
+      properties:
+        rc_id: { type: [integer, "null"], format: int64 }
+        name: { type: [string, "null"] }
+        teacher: { type: [string, "null"] }
+        teacher_id: { type: [integer, "null"], format: int64 }
+        trimester: { type: [string, "null"] }
+        trimester_id: { type: [integer, "null"] }
+        year: { type: [integer, "null"] }
+        school_id: { type: [integer, "null"] }
+        student_group_id: { type: [integer, "null"], format: int64 }
+        student_group_name: { type: [string, "null"] }
+        nb_students: { type: [integer, "null"] }
+        coef: { type: [number, string, "null"] }
+        ects: { type: [number, string, "null"] }
+        has_documents: { type: [boolean, "null"] }
+        has_grades: { type: [boolean, "null"] }
+        syllabus_id: { type: [integer, "null"], format: int64 }
+        links: { $ref: "#/components/schemas/Links" }
+
+    # ------------------------------------------------------------ Scolarité
+
+    Course:
+      type: object
+      required: [rc_id, name]
+      properties:
+        rc_id: { type: integer, format: int64 }
+        name: { type: string, examples: ["T1 - Réseaux avancés"] }
+        teacher: { type: string }
+        teacher_id: { type: integer, format: int64 }
+        coef: { type: number }
+        ects: { type: number }
+        trimester: { type: string, examples: [Semestre 1, S1] }
+        trimester_id: { type: integer }
+        year: { type: integer }
+        school_id: { type: integer }
+        student_group_id: { type: integer, format: int64 }
+        student_group_name: { type: string }
+        nb_students: { type: integer }
+        has_documents:
+          type: boolean
+          description: Des supports sont disponibles via `GET /me/{rcId}/files`.
+        has_grades: { type: boolean }
+        syllabus_id:
+          type: [integer, "null"]
+          format: int64
+          description: Non nul quand un syllabus existe (`GET /me/{rcId}/syllabus`).
+        links: { $ref: "#/components/schemas/Links" }
+
+    CourseFile:
+      type: object
+      description: Support de cours déposé par l'intervenant.
+      required: [oc_id, label]
+      properties:
+        oc_id: { type: integer, format: int64, description: "Identifiant, à passer en `fileId`." }
+        label: { type: string, description: Nom affiché, sans extension. }
+        extension: { type: string, examples: [.pdf, .zip, .docx, .pptx] }
+        type: { type: string, examples: [cours] }
+        category: { type: string, description: Toujours vide observé. }
+        file: { type: "null", description: Toujours `null` dans la liste. }
+        teacher_name: { type: [string, "null"] }
+        update_date: { $ref: "#/components/schemas/EpochMillis" }
+        links:
+          description: "`url` : lien `ges-dl.kordis.fr/private/…`, utilisable seulement avec une session web CAS."
+          $ref: "#/components/schemas/Links"
+
+    Syllabus:
+      type: object
+      required: [syllabus_id, rc_id]
+      properties:
+        syllabus_id: { type: integer, format: int64 }
+        rc_id: { type: integer, format: int64 }
+        cr_id: { type: integer, format: int64 }
+        promo_id: { type: integer, format: int64 }
+        school_id: { type: integer }
+        year: { type: integer }
+        nextyear: { type: integer }
+        code: { type: string }
+        syllabus_name: { type: string }
+        course_name: { type: string }
+        formation: { type: string }
+        tri_name: { type: string, description: Période (ex. semestre). }
+        tri_describe: { type: string }
+        coef: { type: number }
+        ects: { type: number }
+        hours_per_week: { type: integer }
+        personal_work: { type: integer, description: Travail personnel (heures). }
+        exam_duration: { type: integer }
+        teacher_id: { type: integer, format: int64 }
+        teacher_firstname: { type: string }
+        teacher_lastname: { type: string }
+        resp_peda_firstname: { type: [string, "null"], description: Responsable pédagogique. }
+        resp_peda_lastname: { type: [string, "null"] }
+        resp_email: { type: string }
+        asso_firstname: { type: [string, "null"] }
+        asso_lastname: { type: [string, "null"] }
+        teaching_goals: { type: string }
+        teaching_method: { type: [string, "null"] }
+        prerequisite: { type: [string, "null"] }
+        detail_plan: { type: [string, "null"] }
+        computing_tools: { type: [string, "null"] }
+        evaluation_type: { type: string }
+        evaluation_criteria: { type: string }
+        allowed_docs: { type: boolean, description: Documents autorisés à l'examen. }
+        validation: { type: boolean }
+        books_reference: { type: [string, "null"] }
+        other_reference: { type: [string, "null"] }
+        cyberlibris_reference: { type: [string, "null"] }
+        crossknowledge_reference: { type: [string, "null"] }
+        create_date: { $ref: "#/components/schemas/EpochMillis" }
+        control_types:
+          type: array
+          items: { $ref: "#/components/schemas/SyllabusControlType" }
+        seance_details:
+          type: [array, "null"]
+          description: Plan séance par séance.
+          items: { $ref: "#/components/schemas/SyllabusSession" }
+        skills:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/SyllabusSkill" }
+        links: { $ref: "#/components/schemas/Links" }
+
+    SyllabusControlType:
+      type: object
+      properties:
+        evaluation_type_id: { type: integer }
+        evaluation_label: { type: string }
+        links: { $ref: "#/components/schemas/Links" }
+
+    SyllabusSession:
+      type: object
+      properties:
+        cont_id: { type: integer, format: int64 }
+        syl_id: { type: integer, format: int64 }
+        number: { type: integer, description: Numéro de séance. }
+        content: { type: string }
+        homework: { type: [string, "null"] }
+        ref: { type: [string, "null"], description: Références de la séance. }
+        eval: { type: [string, "null"], description: Évaluation prévue à cette séance. }
+        links: { $ref: "#/components/schemas/Links" }
+
+    SyllabusSkill:
+      type: object
+      properties:
+        comp_id: { type: integer, format: int64 }
+        syl_id: { type: integer, format: int64 }
+        comp_label: { type: string }
+        ti_label: { type: string, description: Intitulé du bloc de compétences. }
+        links: { $ref: "#/components/schemas/Links" }
+
+    CourseDetail:
+      type: object
+      required: [rc_id, name]
+      properties:
+        rc_id: { type: integer, format: int64 }
+        name: { type: string }
+        promotion: { type: string }
+        promotion_level: { type: [string, "null"] }
+        promotion_type: { type: [string, "null"] }
+        teacher: { type: string }
+        teacher_id: { type: integer, format: int64 }
+        nb_students: { type: integer }
+        trimester: { type: string }
+        year: { type: integer }
+        student_group_id: { type: integer, format: int64 }
+        _links: { $ref: "#/components/schemas/HalLinks" }
+
+    Grade:
+      type: object
+      description: Bulletin d'une matière.
+      required: [course, rc_id, grades]
+      properties:
+        rc_id: { type: integer, format: int64 }
+        course: { type: string }
+        code: { type: string }
+        grades:
+          type: array
+          description: Notes de contrôle continu, sur 20.
+          items: { type: number }
+        ccaverage: { type: number, description: Moyenne de contrôle continu. }
+        exam: { type: [number, "null"], description: Note d'examen. }
+        average: { type: [number, "null"], description: Moyenne finale de la matière. }
+        bonus: { type: number }
+        letter_mark:
+          type: [string, "null"]
+          description: Note ECTS en lettre. `F` tant qu'aucune moyenne n'est calculée.
+          examples: [A+, A, A-, B+, B, B-, C, D, E, F]
+        coef:
+          type: string
+          description: Coefficient, **en chaîne** (`"N.C."` si non communiqué).
+          examples: ["3.0", "N.C."]
+        ects:
+          type: string
+          description: Crédits ECTS, **en chaîne** (`"N.C."` si non communiqué).
+          examples: ["4.0", "N.C."]
+        trimester: { type: integer }
+        trimester_name: { type: string, examples: [Semestre 1] }
+        year: { type: integer }
+        teacher_civility: { type: [string, "null"] }
+        teacher_first_name: { type: [string, "null"] }
+        teacher_last_name: { type: [string, "null"] }
+        absences: { type: integer, description: Nombre d'absences dans la matière. }
+        lates: { type: integer, description: Nombre de retards dans la matière. }
+        links: { $ref: "#/components/schemas/Links" }
+
+    Absence:
+      type: object
+      required: [date, course_name, justified]
+      properties:
+        date: { $ref: "#/components/schemas/EpochMillis" }
+        course_name: { type: string }
+        justified: { type: boolean }
+        type:
+          type: string
+          description: "`m` observé (sens exact inconnu)."
+        trimester: { type: integer }
+        trimester_name: { type: string }
+        year: { type: integer }
+        links: { $ref: "#/components/schemas/Links" }
+
+    # ------------------------------------------------------------ Personnes
+
+    Person:
+      type: object
+      description: Intervenant ou étudiant, tel que listé dans une collection.
+      required: [uid, firstname, lastname]
+      properties:
+        uid: { type: integer, format: int64 }
+        firstname: { type: string }
+        lastname: { type: string }
+        email: { type: [string, "null"] }
+        civility: { type: [string, "null"] }
+        profile_type: { type: [string, "null"] }
+        links:
+          description: "`self` et `photo` (URL publique signée sur `ges-dl.kordis.fr`)."
+          $ref: "#/components/schemas/Links"
+
+    PersonDetail:
+      type: object
+      required: [uid, firstname, lastname]
+      properties:
+        uid: { type: integer, format: int64 }
+        firstname: { type: string }
+        lastname: { type: string }
+        email: { type: [string, "null"] }
+        civility: { type: [string, "null"] }
+        profile_type: { type: [string, "null"] }
+        _links: { $ref: "#/components/schemas/HalLinks" }
+
+    SchoolClass:
+      type: object
+      required: [puid, name]
+      properties:
+        puid: { type: integer, format: int64 }
+        name: { type: string, examples: ["3ESGI SRC CL A"] }
+        description: { type: string }
+        promotion: { type: string }
+        school: { type: string, examples: [ESGI] }
+        year: { type: integer }
+        trimester: { type: integer }
+        links: { $ref: "#/components/schemas/Links" }
+
+    SchoolClassDetail:
+      type: object
+      required: [puid, name]
+      properties:
+        puid: { type: integer, format: int64 }
+        name: { type: string }
+        description: { type: string }
+        promotion: { type: string }
+        school: { type: string }
+        _links: { $ref: "#/components/schemas/HalLinks" }
+
+    # ------------------------------------------------------------ Projets
+
+    ProjectBase:
+      type: object
+      required: [project_id, name]
+      properties:
+        project_id: { type: integer, format: int64 }
+        name: { type: string }
+        course_name: { type: string }
+        rc_id: { type: integer, format: int64 }
+        discipline_id: { type: integer, format: int64 }
+        teacher_id: { type: integer, format: int64 }
+        author: { type: string }
+        year: { type: integer }
+        trimester_id: { type: integer }
+        is_draft: { type: boolean }
+        update_date: { $ref: "#/components/schemas/EpochMillis" }
+        update_user: { type: string }
+        project_create_date: { $ref: "#/components/schemas/EpochMillis" }
+        project_type_id:
+          type: integer
+          description: "`1` = projet, `2` = TP (`/me/{year}/practicals`)."
+        project_type_group: { type: string, examples: [Groupe, Libre, Imposé] }
+        project_type_subject: { type: string }
+        project_type_presentation: { type: [string, "null"] }
+        project_type_presentation_details: { type: [string, "null"] }
+        project_min_student_group: { type: integer }
+        project_max_student_group: { type: integer }
+        project_personal_work: { type: integer, description: Charge de travail personnel (heures). }
+        project_presentation_duration: { type: integer, description: Durée de soutenance (minutes). }
+        project_teaching_goals: { type: string }
+        project_detail_plan: { type: string }
+        project_computing_tools: { type: string }
+        project_ref_books: { type: string }
+        project_hearing_presentation: { type: [string, "null"] }
+        project_files:
+          type: [array, "null"]
+          description: "`null` observé sur des projets d'années précédentes."
+          items: { $ref: "#/components/schemas/ProjectFile" }
+        links: { $ref: "#/components/schemas/Links" }
+        _links: { $ref: "#/components/schemas/HalLinks" }
+
+    Project:
+      allOf:
+        - $ref: "#/components/schemas/ProjectBase"
+        - type: object
+          properties:
+            groups:
+              type: array
+              items: { $ref: "#/components/schemas/ProjectGroup" }
+            steps:
+              type: [array, "null"]
+              items: { $ref: "#/components/schemas/ProjectStep" }
+            project_group_logs:
+              type: [array, "null"]
+              items: { $ref: "#/components/schemas/ProjectGroupLog" }
+
+    ProjectFile:
+      type: object
+      properties:
+        pf_id: { type: integer, format: int64 }
+        pro_id: { type: integer, format: int64, description: Identifiant du projet. }
+        pf_title: { type: string }
+        pf_file:
+          type: string
+          description: Nom de fichier stocké (ex. `AbCdEf.pdf`). Pas d'URL de téléchargement exposée.
+        pf_crea_date: { $ref: "#/components/schemas/EpochMillis" }
+        links: { $ref: "#/components/schemas/Links" }
+
+    ProjectGroup:
+      type: object
+      properties:
+        project_group_id: { type: integer, format: int64 }
+        project_id: { type: integer, format: int64 }
+        subject_id: { type: [integer, "null"], format: int64 }
+        group_name: { type: string }
+        subject_validated: { type: boolean }
+        date_presentation: { oneOf: [{ $ref: "#/components/schemas/EpochMillis" }, { type: "null" }] }
+        teacher_comment: { type: [string, "null"] }
+        teacher_intern_comment: { type: [string, "null"] }
+        project_group_students:
+          type: [array, "null"]
+          description: Membres du groupe. `null` pour un groupe vide.
+          items: { $ref: "#/components/schemas/ProjectGroupStudent" }
+        links: { $ref: "#/components/schemas/Links" }
+
+    ProjectGroupStudent:
+      type: object
+      properties:
+        u_id: { type: integer, format: int64 }
+        firstname: { type: string }
+        name: { type: string }
+        promotion: { type: string }
+        option: { type: string }
+        classe: { type: string }
+        links: { $ref: "#/components/schemas/Links" }
+
+    ProjectStep:
+      type: object
+      properties:
+        psp_id: { type: integer, format: int64 }
+        pro_id: { type: integer, format: int64 }
+        psp_number: { type: integer }
+        psp_type: { type: string, examples: [Rendu final] }
+        psp_desc: { type: string }
+        psp_limit_date:
+          description: Date limite. `null` pour une étape sans échéance.
+          oneOf: [{ $ref: "#/components/schemas/EpochMillis" }, { type: "null" }]
+        files:
+          type: [array, "null"]
+          description: Fichiers déposés par les groupes pour cette étape.
+          items: { $ref: "#/components/schemas/ProjectStepFile" }
+        links: { $ref: "#/components/schemas/Links" }
+
+    ProjectStepFile:
+      type: object
+      description: Rendu déposé par un étudiant sur une étape de projet.
+      properties:
+        psf_id: { type: integer, format: int64 }
+        psp_id: { type: integer, format: int64, description: Identifiant de l'étape. }
+        pgr_id: { type: integer, format: int64, description: Identifiant du groupe. }
+        u_id: { type: integer, format: int64, description: Auteur du dépôt. }
+        psf_name: { type: string, description: Nom d'origine du fichier. }
+        psf_desc: { type: string }
+        psf_file: { type: string, description: Nom de fichier stocké. }
+        psf_file_type: { type: string }
+        psf_file_size: { type: integer, description: Taille en octets. }
+        psf_file_hash: { type: string }
+        psf_role_user: { type: string }
+        psf_begin_upload: { $ref: "#/components/schemas/EpochMillis" }
+        psf_end_upload: { $ref: "#/components/schemas/EpochMillis" }
+        links: { $ref: "#/components/schemas/Links" }
+
+    ProjectGroupLog:
+      type: object
+      properties:
+        pgl_id: { type: integer, format: int64 }
+        pgr_id: { type: integer, format: int64, description: Identifiant du groupe. }
+        user_id: { type: integer, format: int64 }
+        pgl_author: { type: string }
+        pgl_role_user: { type: string }
+        pgl_describe: { type: string }
+        pgl_date: { $ref: "#/components/schemas/EpochMillis" }
+        pgl_type_action: { type: string, examples: [join] }
+        links: { $ref: "#/components/schemas/Links" }
+
+    NextProjectStep:
+      type: object
+      properties:
+        pro_id: { type: integer, format: int64 }
+        pro_name: { type: string }
+        course_name: { type: string }
+        group_id: { type: integer, format: int64 }
+        psp_id: { type: integer, format: int64 }
+        psp_number: { type: integer }
+        psp_type: { type: string }
+        psp_desc: { type: string }
+        psp_limit_date: { $ref: "#/components/schemas/EpochMillis" }
+        type: { type: string }
+        links: { $ref: "#/components/schemas/Links" }
+
+    # ------------------------------------------------------------ Vie de campus
+
+    News:
+      type: object
+      required: [ne_id, title]
+      properties:
+        ne_id: { type: integer, format: int64 }
+        title: { type: string }
+        author: { type: string }
+        summary: { type: [string, "null"] }
+        text: { type: [string, "null"] }
+        html: { type: [string, "null"], description: Contenu HTML complet. }
+        date: { $ref: "#/components/schemas/EpochMillis" }
+        update_date: { $ref: "#/components/schemas/EpochMillis" }
+        links: { $ref: "#/components/schemas/Links" }
+
+    NewsDetail:
+      type: object
+      required: [ne_id, title]
+      properties:
+        ne_id: { type: integer, format: int64 }
+        title: { type: string }
+        author: { type: string }
+        summary: { type: [string, "null"] }
+        text: { type: [string, "null"] }
+        html: { type: [string, "null"] }
+        date: { $ref: "#/components/schemas/EpochMillis" }
+        update_date: { $ref: "#/components/schemas/EpochMillis" }
+        _links: { $ref: "#/components/schemas/HalLinks" }
+
+    Banner:
+      type: object
+      required: [ba_id, title]
+      properties:
+        ba_id: { type: integer, format: int64 }
+        title: { type: string }
+        description: { type: [string, "null"] }
+        author: { type: string }
+        html: { type: [string, "null"] }
+        image: { type: string, description: URL de l'image. }
+        url: { type: [string, "null"], description: Lien cible de la bannière. }
+        display_order: { type: integer }
+        begin_date: { $ref: "#/components/schemas/EpochMillis" }
+        end_date: { $ref: "#/components/schemas/EpochMillis" }
+        links: { $ref: "#/components/schemas/Links" }
+
+    CampusEvent:
+      type: object
+      required: [event_id, event_title]
+      properties:
+        event_id: { type: integer, format: int64 }
+        event_title: { type: string }
+        event_type: { type: string, examples: [Evénement, SpeedMeeting] }
+        event_date: { $ref: "#/components/schemas/EpochMillis" }
+        start_subscription_date: { $ref: "#/components/schemas/EpochMillis" }
+        end_subscription_date: { $ref: "#/components/schemas/EpochMillis" }
+        location: { type: string }
+        organizer: { type: string }
+        description: { type: [string, "null"] }
+        is_participant_subscribed: { type: boolean }
+        links: { $ref: "#/components/schemas/Links" }
+
+    School:
+      type: object
+      required: [puid, name]
+      properties:
+        puid: { type: integer, format: int64 }
+        name: { type: string, examples: [ESGI] }
+        description: { type: string }
+        links: { $ref: "#/components/schemas/Links" }
+
+    Campus:
+      type: object
+      required: [campus_id, name]
+      properties:
+        campus_id: { type: integer }
+        name: { type: string }
+        address: { type: string }
+        zipcode: { type: string }
+        city: { type: string }
+        city_level: { type: integer }
+        latitude: { type: number }
+        longitude: { type: number }
+        google_map_url: { type: string }
+        color: { type: string }
+        available: { type: boolean }
+        rooms: { type: [array, "null"], items: {}, description: Toujours `null` observé. }
+        links:
+          description: "`self` et `rooms` vers `/planning/campus/{id}` (inaccessible en étudiant)."
+          $ref: "#/components/schemas/Links"
+
+    Partner:
+      type: object
+      required: [partner_id, name]
+      properties:
+        partner_id: { type: integer, format: int64 }
+        name: { type: string }
+        link: { type: string }
+        content: { type: [string, "null"] }
+        small_image_url: { type: string }
+        medium_image_url: { type: string }
+        links: { $ref: "#/components/schemas/Links" }
