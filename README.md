@@ -64,7 +64,7 @@ myges grades                     # notes de l'année ; -y 2025 pour une autre
 myges absences
 myges courses                    # matières (avec leur rc_id)
 myges files                      # supports de cours
-myges files --download          # tout télécharger dans le dossier courant (ou --download ~/cours)
+myges files --download           # tout télécharger dans le dossier courant (ou --download ~/cours)
                                  # relancer ne récupère que les nouveaux
 myges syllabus <rc_id>
 myges projects
