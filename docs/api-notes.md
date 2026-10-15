@@ -4,6 +4,9 @@ Comportements observés sur l'API réelle, consignés au fil des découvertes. L
 exhaustive reste la [spécification](../openapi/myges.yaml) ; ce fichier garde le *pourquoi* et
 le *quand*.
 
+Dans la spec, chaque opération porte `x-verified` : la date de la dernière vérification
+sur l'API réelle, ou `false` pour une route jamais appelée (les écritures).
+
 Chaque entrée est datée. Si un comportement change, ajouter une nouvelle entrée plutôt que
 réécrire l'ancienne.
 

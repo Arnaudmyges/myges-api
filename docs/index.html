@@ -10,13 +10,16 @@
     body { margin: 0; background: #fafafa; }
     .banner { font: 14px/1.5 system-ui, sans-serif; padding: 10px 16px; background: #fff7e0; border-bottom: 1px solid #f0d58a; }
     .banner a { color: inherit; }
+    /* Pas de bloc d'introduction : le contexte est dans le bandeau et docs/api-notes.md */
+    .swagger-ui .info .description, .swagger-ui .info .info__license, .swagger-ui .info .info__contact { display: none; }
+    .swagger-ui .info { margin: 24px 0 8px; }
   </style>
 </head>
 <body>
   <div class="banner">
     Projet <strong>non officiel</strong>, sans lien avec Kordis ni le Réseau GES.
     Pour « Try it out » : <code>myges token</code>, puis <strong>Authorize → bearerAuth</strong>.
-    Version lisible : <a href="redoc.html">Redoc</a> · Source : <a href="../openapi/myges.yaml">openapi.yaml</a>
+    Version lisible : <a href="redoc.html">Redoc</a> · Source : <a href="../openapi/myges.yaml">openapi.yaml</a> · <a href="https://github.com/Arnaudmyges/myges-api/blob/main/docs/api-notes.md">Notes sur l'API</a>
   </div>
   <div id="swagger-ui"></div>
   <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
