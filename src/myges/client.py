@@ -125,8 +125,8 @@ class _BaseClient:
 
     def _no_credentials(self) -> TokenExpiredError:
         return TokenExpiredError(
-            "Token absent, expiré ou refusé, et pas de mot de passe pour en obtenir un "
-            "nouveau (MYGES_PASSWORD ou `myges login`)."
+            "Session expirée ou absente, et pas de mot de passe pour la renouveler : "
+            "relancer `myges login` (ou définir MYGES_PASSWORD)."
         )
 
     # ------------------------------------------------------------ HTTP

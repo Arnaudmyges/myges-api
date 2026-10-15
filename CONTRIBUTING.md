@@ -1,5 +1,18 @@
 # Contribuer
 
+## Mise en place
+
+```bash
+git clone https://github.com/Arnaudmyges/myges-api && cd myges-api
+uv sync --group dev        # ou : python3 -m venv .venv && .venv/bin/pip install -e '.[cli]' (+ outils de dev)
+make check                 # ruff + mypy --strict + pytest
+make live                  # contrat contre la vraie API (MYGES_USERNAME / MYGES_PASSWORD)
+make docs                  # Swagger UI + Redoc sur http://localhost:8000/docs/
+```
+
+Les particularités de l'API sont consignées dans [docs/api-notes.md](docs/api-notes.md) :
+toute nouvelle découverte y ajoute une entrée datée.
+
 ## Règle n°1 : aucune donnée réelle dans le dépôt
 
 Les réponses de l'API contiennent des données personnelles : adresse, INE, notes, noms et
@@ -26,6 +39,7 @@ dans une PR.
 5. Ajouter `tests/fixtures/<operationId>.json` (synthétique), puis l'entrée correspondante
    dans `tests/test_models.py` et `tests/test_live.py`.
 6. `make check`, puis `make live` avec vos identifiants.
+7. Consigner ce qui a été appris dans `docs/api-notes.md`.
 
 Les tests vérifient automatiquement que :
 

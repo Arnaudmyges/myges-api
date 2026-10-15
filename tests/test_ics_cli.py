@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from conftest import fixture
 from myges import models as m
 from myges import to_ics
+from myges.auth import AUTH_URL
 from myges.cli import app
 from myges.client import API_URL
 
@@ -85,3 +86,28 @@ def test_cli_files_download_is_idempotent(tmp_path: Path) -> None:
     assert dl.call_count == 2
     saved = sorted(p.name for p in (tmp_path / "500001").iterdir())
     assert saved == ["Chapitre 1 - Introduction.pdf", "TP1_sources.zip"]
+
+
+def test_cli_login_remembers_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in ("MYGES_USERNAME", "MYGES_PASSWORD", "MYGES_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    location = "comreseaugesskolae:/oauth2redirect#access_token=tok&expires_in=560063"
+    runner = CliRunner()
+    with respx.mock(base_url=API_URL) as api:
+        api.get(AUTH_URL).mock(return_value=httpx.Response(302, headers={"Location": location}))
+        years = api.get("/me/years").mock(
+            return_value=httpx.Response(200, json=fixture("getYears"))
+        )
+
+        assert runner.invoke(app, ["years"]).exit_code == 2  # pas encore connecté
+        login = runner.invoke(app, ["login"], input="jdupont\nsecret\n")
+        assert login.exit_code == 0, login.output
+        result = runner.invoke(app, ["years"])  # aucune variable d'environnement
+        assert result.exit_code == 0, result.output
+        assert "2026" in result.output
+        assert years.calls.last.request.headers["Authorization"] == "Bearer tok"
+
+        assert runner.invoke(app, ["logout"]).exit_code == 0
+        assert runner.invoke(app, ["years"]).exit_code == 2

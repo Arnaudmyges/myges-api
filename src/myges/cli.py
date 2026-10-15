@@ -1,8 +1,9 @@
 """Interface en ligne de commande ``myges``.
 
-Identifiants : ``MYGES_USERNAME`` / ``MYGES_PASSWORD`` dans l'environnement, ou
-``myges login`` (qui demande le mot de passe et met le token en cache). Ensuite,
-les commandes réutilisent le token tant qu'il est valide (~6 jours).
+``myges login`` demande identifiant et mot de passe, met le token en cache et retient
+le compte : les commandes suivantes fonctionnent directement, tant que le token est
+valide (~6 jours). Pour un usage non interactif, ``MYGES_USERNAME`` / ``MYGES_PASSWORD``
+(ou ``MYGES_TOKEN``) dans l'environnement priment sur le compte retenu.
 """
 
 from __future__ import annotations
@@ -49,21 +50,43 @@ YearOpt = Annotated[
 # ---------------------------------------------------------------- Utilitaires
 
 
-def _username() -> str:
-    username = os.environ.get("MYGES_USERNAME")
-    if not username:
-        err.print("[red]MYGES_USERNAME non défini.[/] Lancer `myges login` ou l'exporter.")
-        raise typer.Exit(2)
-    return username
+def _config_path() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(base) / "myges" / "config.json"
+
+
+def _saved_username() -> str | None:
+    try:
+        value = json.loads(_config_path().read_text(encoding="utf-8")).get("username")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and value else None
+
+
+def _save_username(username: str | None) -> None:
+    path = _config_path()
+    if username is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"username": username}), encoding="utf-8")
+
+
+def _current_username() -> str | None:
+    return os.environ.get("MYGES_USERNAME") or _saved_username()
+
+
+def _not_logged_in() -> typer.Exit:
+    err.print("[red]Pas connecté.[/] Lancer d'abord `myges login`.")
+    return typer.Exit(2)
 
 
 @contextmanager
 def _client(password: str | None = None) -> Iterator[MyGES]:
     token = os.environ.get("MYGES_TOKEN")
-    username = os.environ.get("MYGES_USERNAME")
+    username = _current_username()
     if not token and not username:
-        err.print("[red]Ni MYGES_USERNAME ni MYGES_TOKEN définis.[/] Voir `myges login --help`.")
-        raise typer.Exit(2)
+        raise _not_logged_in()
     try:
         with MyGES(
             username,
@@ -123,8 +146,8 @@ def login(
         str | None, typer.Option("--username", "-u", envvar="MYGES_USERNAME")
     ] = None,
 ) -> None:
-    """S'authentifier et mettre le token en cache (~/.cache/myges/tokens.json)."""
-    username = username or typer.prompt("Identifiant myGES")
+    """Se connecter : le compte est retenu pour les commandes suivantes."""
+    username = username or typer.prompt("Identifiant myGES", default=_saved_username())
     password = os.environ.get("MYGES_PASSWORD") or typer.prompt("Mot de passe", hide_input=True)
     try:
         with MyGES(username, password) as client:
@@ -132,17 +155,23 @@ def login(
     except MyGESError as exc:
         err.print(f"[red]Échec :[/] {exc}")
         raise typer.Exit(1) from exc
-    console.print(f"[green]Connecté.[/] Token valide jusqu'au {_fmt_dt(token.expires_at)}.")
-    if not os.environ.get("MYGES_USERNAME"):
-        console.print(f"[dim]Pour les commandes suivantes : export MYGES_USERNAME={username}[/]")
+    _save_username(username)
+    console.print(
+        f"[green]Connecté en tant que {username}.[/] "
+        f"Session valide jusqu'au {_fmt_dt(token.expires_at)}."
+    )
 
 
 @app.command()
 def logout() -> None:
-    """Supprimer le token en cache."""
-    with MyGES(_username()) as client:
+    """Se déconnecter : oublie le compte et son token."""
+    username = _current_username()
+    if username is None:
+        raise _not_logged_in()
+    with MyGES(username) as client:
         client.logout()
-    console.print("Token supprimé du cache.")
+    _save_username(None)
+    console.print(f"Déconnecté ({username}).")
 
 
 @app.command()
