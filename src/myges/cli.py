@@ -233,6 +233,7 @@ def agenda(
     with _client() as client:
         events = sorted(client.agenda(first, last), key=lambda e: e.start_date)
     if ics:
+        ics = ics.expanduser()  # PowerShell ne développe pas ~ pour les programmes externes
         ics.write_text(to_ics(events), encoding="utf-8")
         console.print(f"{len(events)} créneaux écrits dans {ics}")
         return
@@ -364,7 +365,7 @@ def files(
             )
         fetched = skipped = 0
         for name, rc, item in listing:
-            dest = download / _safe_name(name) / _safe_name(item.filename)
+            dest = download.expanduser() / _safe_name(name) / _safe_name(item.filename)
             if dest.exists():
                 skipped += 1
                 continue

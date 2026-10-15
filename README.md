@@ -19,10 +19,37 @@ mobile myGES (ESGI, ECITV, PPA…).
 
 ## Installation
 
+Nécessite Python ≥ 3.10. On installe d'abord [pipx](https://pipx.pypa.io) (une seule fois),
+qui rend la commande `myges` disponible partout.
+
+**Linux (Debian / Ubuntu)**
+
 ```bash
-sudo apt install pipx && pipx ensurepath   # une seule fois, puis ouvrir un nouveau terminal
-pipx install "myges-api[cli] @ git+https://github.com/Arnaudmyges/myges-api"
+sudo apt install pipx
+pipx ensurepath
 ```
+
+**macOS**
+
+```bash
+brew install pipx
+pipx ensurepath
+```
+
+**Windows** (PowerShell, avec Python depuis [python.org](https://www.python.org/downloads/) ou le Microsoft Store)
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+```
+
+Puis, **dans un nouveau terminal**, sur tous les systèmes :
+
+```bash
+pipx install "myges-api[cli] @ https://github.com/Arnaudmyges/myges-api/archive/refs/heads/main.zip"
+```
+
+Mise à jour : relancer la même commande avec `--force`.
 
 ## CLI
 

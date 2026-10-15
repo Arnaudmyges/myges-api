@@ -111,3 +111,15 @@ def test_cli_login_remembers_account(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
         assert runner.invoke(app, ["logout"]).exit_code == 0
         assert runner.invoke(app, ["years"]).exit_code == 2
+
+
+@pytest.mark.usefixtures("env")
+def test_cli_expands_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # PowerShell transmet « ~ » tel quel : la CLI doit le développer elle-même.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    with respx.mock(base_url=API_URL) as api:
+        api.get("/me/agenda").mock(return_value=httpx.Response(200, json=fixture("getAgenda")))
+        result = CliRunner().invoke(app, ["agenda", "--ics", "~/cours.ics"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "cours.ics").exists()
