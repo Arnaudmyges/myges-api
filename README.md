@@ -22,7 +22,7 @@ mobile myGES (ESGI, ECITV, PPA…).
 Nécessite Python ≥ 3.10. On installe d'abord [pipx](https://pipx.pypa.io) (une seule fois),
 qui rend la commande `myges` disponible partout.
 
-**Linux (Debian / Ubuntu)**
+**Linux (Debian / Ubuntu) et WSL**
 
 ```bash
 sudo apt install pipx
@@ -36,7 +36,7 @@ brew install pipx
 pipx ensurepath
 ```
 
-**Windows** (PowerShell, avec Python depuis [python.org](https://www.python.org/downloads/) ou le Microsoft Store)
+**Windows** : le plus simple est WSL (section Linux ci-dessus). Sinon, en natif (PowerShell, avec Python depuis [python.org](https://www.python.org/downloads/) ou le Microsoft Store)
 
 ```powershell
 py -m pip install --user pipx
@@ -69,6 +69,9 @@ myges practicals                 # TP
 myges steps                      # prochaines échéances
 myges token                      # token à coller dans « Authorize » du Swagger
 ```
+
+Sous WSL, pour retrouver les supports dans l'Explorateur Windows, télécharger vers le disque
+Windows : `myges files --download /mnt/c/Users/<toi>/Documents/cours`.
 
 `myges --help` liste toutes les commandes, et `--json` donne la sortie brute de chacune.
 La session dure ~6 jours ; ensuite, relancer `myges login`.
