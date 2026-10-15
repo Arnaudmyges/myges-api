@@ -1,7 +1,18 @@
 # myges-api
 
-CLI, client Python et [documentation Swagger](https://arnaudmyges.github.io/myges-api/docs/) de
-l'API myGES / Kordis, celle de l'application mobile myGES (ESGI, ECITV, PPA…).
+<p align="center">
+  <a href="https://arnaudmyges.github.io/myges-api/docs/"><img alt="Swagger UI" src="https://img.shields.io/badge/Swagger_UI-docs-85EA2D?logo=swagger&logoColor=black&style=for-the-badge"></a>
+  <a href="https://arnaudmyges.github.io/myges-api/docs/redoc.html"><img alt="Redoc" src="https://img.shields.io/badge/Redoc-r%C3%A9f%C3%A9rence-E53935?logo=readthedocs&logoColor=white&style=for-the-badge"></a>
+  <a href="openapi/myges.yaml"><img alt="OpenAPI 3.1" src="https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white&style=for-the-badge"></a>
+  <a href="https://arnaudmyges.github.io/myges-api/docs/"><img alt="33 endpoints" src="https://img.shields.io/badge/endpoints-33-blue?style=for-the-badge"></a>
+</p>
+
+CLI, client Python et documentation Swagger de l'API myGES / Kordis, celle de l'application
+mobile myGES (ESGI, ECITV, PPA…).
+
+<a href="https://arnaudmyges.github.io/myges-api/docs/">
+  <img alt="Documentation Swagger de l'API myGES" src="docs/assets/swagger.png">
+</a>
 
 > Projet **non officiel**, sans lien avec Kordis ni le Réseau GES. L'API n'est pas documentée
 > publiquement et peut changer sans préavis.
