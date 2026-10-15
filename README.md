@@ -7,7 +7,7 @@ myGES / Kordis, celle qu'utilise l'application mobile myGES du Réseau GES (ESGI
 > documentent cette API. Tout ce qui est décrit ici a été observé sur l'API réelle, et peut
 > changer sans préavis.
 
-- 📖 **Documentation interactive** : [Swagger UI](https://arnaudmyges.github.io/myges-api/) · [Redoc](https://arnaudmyges.github.io/myges-api/redoc.html)
+- 📖 **Documentation interactive** : [Swagger UI](https://arnaudmyges.github.io/myges-api/docs/) · [Redoc](https://arnaudmyges.github.io/myges-api/docs/redoc.html)
 - 📄 **Spécification** : [`openapi/myges.yaml`](openapi/myges.yaml)
 
 ## Ce que contient le dépôt
@@ -130,7 +130,7 @@ git clone https://github.com/Arnaudmyges/myges-api && cd myges-api
 uv sync --group dev
 make check                 # ruff + mypy --strict + pytest
 make live                  # contrat contre la vraie API (identifiants requis)
-make docs                  # Swagger UI + Redoc sur http://localhost:8000
+make docs                  # Swagger UI + Redoc sur http://localhost:8000/docs/
 ```
 
 Voir [CONTRIBUTING.md](CONTRIBUTING.md), en particulier pour **documenter un nouvel endpoint**

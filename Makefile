@@ -14,8 +14,6 @@ test:
 live:
 	pytest -m live
 
-# Site Swagger UI + Redoc dans _site/, servi sur http://localhost:8000
+# Swagger UI + Redoc sur http://localhost:8000/docs/ (même arborescence que GitHub Pages)
 docs:
-	rm -rf _site && mkdir _site
-	cp docs/*.html _site/ && cp openapi/myges.yaml _site/openapi.yaml
-	python -m http.server -d _site 8000
+	python -m http.server 8000

@@ -10,9 +10,6 @@ dist/
 .ruff_cache/
 .coverage
 
-# Site de doc généré
-_site/
-
 # Données personnelles : captures de vraies réponses, tokens, identifiants.
 # Les fixtures de tests/fixtures/ sont synthétiques et doivent le rester.
 .env
