@@ -10,9 +10,11 @@
 CLI, client Python et documentation Swagger de l'API myGES / Kordis, celle de l'application
 mobile myGES (ESGI, ECITV, PPA…).
 
-<a href="https://arnaudmyges.github.io/myges-api/docs/">
-  <img alt="Documentation Swagger de l'API myGES" src="docs/assets/swagger.png">
-</a>
+<p align="center">
+  <a href="https://arnaudmyges.github.io/myges-api/docs/">
+    <img alt="Documentation Swagger de l'API myGES" src="docs/assets/swagger.png" width="50%">
+  </a>
+</p>
 
 > Projet **non officiel**, sans lien avec Kordis ni le Réseau GES. L'API n'est pas documentée
 > publiquement et peut changer sans préavis.
