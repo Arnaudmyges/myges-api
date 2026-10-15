@@ -334,12 +334,15 @@ def files(
     download: Annotated[
         Path | None,
         typer.Option(
-            "--download", "-d", help="Télécharger dans ce dossier (un sous-dossier par matière)."
+            "--download",
+            "-d",
+            metavar="[DOSSIER]",
+            help="Télécharger (un sous-dossier par matière). Sans dossier : dossier courant.",
         ),
     ] = None,
     json_: JsonOpt = False,
 ) -> None:
-    """Supports de cours : liste, ou téléchargement avec `--download DOSSIER`.
+    """Supports de cours : liste, ou téléchargement avec `--download [DOSSIER]`.
 
     Les fichiers déjà présents sont ignorés : relancer la commande ne télécharge que les
     nouveaux supports.
@@ -375,7 +378,8 @@ def files(
             tmp.replace(dest)
             fetched += 1
             console.print(f"[green]↓[/] {dest}")
-    console.print(f"{fetched} téléchargé(s), {skipped} déjà présent(s).")
+    where = download.expanduser().resolve()
+    console.print(f"{fetched} téléchargé(s), {skipped} déjà présent(s), dans {where}.")
 
 
 @app.command()
@@ -594,8 +598,26 @@ def raw(
         _dump(client.request("GET", path, params=params or None))
 
 
-def main() -> None:  # pragma: no cover
-    app()
+def _default_download_dir(args: list[str]) -> list[str]:
+    """``myges files --download`` sans valeur → dossier courant.
+
+    Typer ne gère pas les options à valeur facultative : on complète la ligne de
+    commande avant de la lui passer. Limité à ``files`` (``-d`` vaut ``--days`` ailleurs).
+    """
+    if not args or args[0] != "files":
+        return args
+    out: list[str] = []
+    for i, arg in enumerate(args):
+        out.append(arg)
+        if arg in ("--download", "-d"):
+            following = args[i + 1] if i + 1 < len(args) else None
+            if following is None or following.startswith("-"):
+                out.append(".")
+    return out
+
+
+def main() -> None:
+    app(args=_default_download_dir(sys.argv[1:]), prog_name="myges")
 
 
 if __name__ == "__main__":  # pragma: no cover

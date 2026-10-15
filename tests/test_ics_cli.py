@@ -11,7 +11,7 @@ from conftest import fixture
 from myges import models as m
 from myges import to_ics
 from myges.auth import AUTH_URL
-from myges.cli import app
+from myges.cli import _default_download_dir, app, main
 from myges.client import API_URL
 
 
@@ -123,3 +123,38 @@ def test_cli_expands_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
         result = CliRunner().invoke(app, ["agenda", "--ics", "~/cours.ics"])
     assert result.exit_code == 0, result.output
     assert (tmp_path / "cours.ics").exists()
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["files", "--download"], ["files", "--download", "."]),
+        (["files", "-d", "--json"], ["files", "-d", ".", "--json"]),
+        (["files", "--download", "~/cours"], ["files", "--download", "~/cours"]),
+        (["files", "500001", "-d"], ["files", "500001", "-d", "."]),
+        (["agenda", "-d"], ["agenda", "-d"]),  # -d = --days ici : on ne touche à rien
+        ([], []),
+    ],
+)
+def test_download_without_folder_defaults_to_cwd(argv: list[str], expected: list[str]) -> None:
+    assert _default_download_dir(argv) == expected
+
+
+@pytest.mark.usefixtures("env")
+def test_cli_download_into_current_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["myges", "files", "500001", "--download"])
+    with respx.mock(base_url=API_URL) as api:
+        api.get("/me/500001/files").mock(
+            return_value=httpx.Response(200, json=fixture("getCourseFiles"))
+        )
+        api.get(path__regex=r"/me/500001/files/\d+").mock(
+            return_value=httpx.Response(200, content=b"%PDF")
+        )
+        with pytest.raises(SystemExit) as done:
+            main()
+    assert done.value.code == 0
+    assert sorted(p.name for p in (tmp_path / "500001").iterdir()) == [
+        "Chapitre 1 - Introduction.pdf",
+        "TP1_sources.zip",
+    ]
