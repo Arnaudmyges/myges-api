@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
@@ -130,11 +131,72 @@ def _table(
     console.print(table)
 
 
+_JOURS = ("lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim.")
+
+
+def _fmt_day(value: datetime) -> str:
+    """« ven. 16/10 », quelle que soit la locale du système."""
+    local = value.astimezone()
+    return f"{_JOURS[local.weekday()]} {local:%d/%m}"
+
+
 def _parse_date(value: str) -> date:
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise typer.BadParameter(f"date attendue au format AAAA-MM-JJ, reçu {value!r}") from exc
+
+
+def _fold(text: str) -> str:
+    """Minuscules sans accents, pour comparer des noms de matières."""
+    decomposed = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+class _Courses:
+    """Matières d'une année numérotées 1..N (tri par nom), pour désigner une matière
+    par son numéro ou une partie de son nom plutôt que par son ``rc_id``."""
+
+    def __init__(self, client: MyGES, year: int | None) -> None:
+        self.items = sorted(client.courses(year), key=lambda c: _fold(c.name))
+        self._numbers = {c.rc_id: n for n, c in enumerate(self.items, 1)}
+
+    def number(self, rc_id: int | None) -> str:
+        """Numéro affiché dans la colonne ``#`` (vide si la matière est inconnue)."""
+        found = self._numbers.get(rc_id) if rc_id is not None else None
+        return str(found) if found else ""
+
+    def resolve(self, ref: str) -> tuple[int, str]:
+        """``"3"``, ``"anglais"`` ou un ``rc_id`` → (rc_id, nom). Sort en erreur sinon."""
+        ref = ref.strip()
+        if ref.isdigit():
+            value = int(ref)
+            if 1 <= value <= len(self.items):
+                chosen = self.items[value - 1]
+                return chosen.rc_id, chosen.name
+            known = next((c for c in self.items if c.rc_id == value), None)
+            # rc_id d'une autre année : accepté tel quel (scripts, anciennes matières).
+            return value, known.name if known else str(value)
+        words = _fold(ref).split()
+        matches = [c for c in self.items if all(w in _fold(c.name) for w in words)]
+        if len(matches) == 1:
+            return matches[0].rc_id, matches[0].name
+        if not matches:
+            err.print(f"[red]Aucune matière ne correspond à « {ref} ».[/] Voir `myges courses`.")
+        else:
+            err.print(f"[red]« {ref} » est ambigu[/], préciser parmi :")
+            for c in matches:
+                err.print(f"  {self.number(c.rc_id):>3}  {c.name}")
+        raise typer.Exit(2)
+
+
+CourseArg = Annotated[
+    str,
+    typer.Argument(
+        metavar="MATIÈRE",
+        help="Numéro (colonne # de `myges courses`), partie du nom (ex. anglais) ou rc_id.",
+    ),
+]
 
 
 # ---------------------------------------------------------------- Auth
@@ -232,22 +294,24 @@ def agenda(
     last = _parse_date(end) + timedelta(days=1) if end else first + timedelta(days=days)
     with _client() as client:
         events = sorted(client.agenda(first, last), key=lambda e: e.start_date)
-    if ics:
-        ics = ics.expanduser()  # PowerShell ne développe pas ~ pour les programmes externes
-        ics.write_text(to_ics(events), encoding="utf-8")
-        console.print(f"{len(events)} créneaux écrits dans {ics}")
-        return
-    if json_:
-        return _dump(events)
+        if ics:
+            ics = ics.expanduser()  # PowerShell ne développe pas ~ pour les programmes externes
+            ics.write_text(to_ics(events), encoding="utf-8")
+            console.print(f"{len(events)} créneaux écrits dans {ics}")
+            return
+        if json_:
+            return _dump(events)
+        catalog = _Courses(client, None)
     _table(
         f"Agenda du {first:%d/%m} au {last - timedelta(days=1):%d/%m}",
         events,
         [
-            ("Jour", lambda e: _fmt_dt(e.start_date, "%a %d/%m")),
+            ("Jour", lambda e: _fmt_day(e.start_date)),
             (
                 "Horaire",
                 lambda e: f"{_fmt_dt(e.start_date, '%H:%M')}–{_fmt_dt(e.end_date, '%H:%M')}",
             ),
+            ("#", lambda e: catalog.number(e.discipline.rc_id if e.discipline else None)),
             ("Cours", lambda e: e.name),
             ("Salle", lambda e: e.location or e.modality),
             ("Intervenant", lambda e: e.teacher),
@@ -263,12 +327,14 @@ def grades(year: YearOpt = None, json_: JsonOpt = False) -> None:
     """Notes par matière."""
     with _client() as client:
         data = client.grades(year)
-    if json_:
-        return _dump(data)
+        if json_:
+            return _dump(data)
+        catalog = _Courses(client, year)
     _table(
         "Notes",
-        data,
+        sorted(data, key=lambda g: int(catalog.number(g.rc_id) or 10**6)),
         [
+            ("#", lambda g: catalog.number(g.rc_id)),
             ("Matière", lambda g: g.course),
             ("Notes", lambda g: " ".join(f"{n:g}" for n in g.grades)),
             ("Exam", lambda g: g.exam),
@@ -300,21 +366,22 @@ def absences(year: YearOpt = None, json_: JsonOpt = False) -> None:
 
 @app.command()
 def courses(year: YearOpt = None, json_: JsonOpt = False) -> None:
-    """Matières suivies."""
+    """Matières suivies. Le numéro # sert à désigner la matière dans les autres commandes."""
     with _client() as client:
-        data = client.courses(year)
+        catalog = _Courses(client, year)
     if json_:
-        return _dump(data)
+        return _dump(catalog.items)
     _table(
         "Matières",
-        data,
+        catalog.items,
         [
-            ("rc_id", lambda c: c.rc_id),
+            ("#", lambda c: catalog.number(c.rc_id)),
             ("Matière", lambda c: c.name),
             ("Intervenant", lambda c: c.teacher),
             ("Coef", lambda c: c.coef),
             ("ECTS", lambda c: c.ects),
             ("Docs", lambda c: "oui" if c.has_documents else ""),
+            ("rc_id", lambda c: c.rc_id),
         ],
     )
 
@@ -327,8 +394,12 @@ def _safe_name(name: str) -> str:
 
 @app.command()
 def files(
-    rc_id: Annotated[
-        int | None, typer.Argument(help="Matière (défaut : toutes celles de l'année).")
+    course: Annotated[
+        str | None,
+        typer.Argument(
+            metavar="[MATIÈRE]",
+            help="Numéro, partie du nom ou rc_id (défaut : toutes les matières de l'année).",
+        ),
     ] = None,
     year: YearOpt = None,
     download: Annotated[
@@ -348,10 +419,11 @@ def files(
     nouveaux supports.
     """
     with _client() as client:
-        if rc_id is not None:
-            targets = [(rc_id, str(rc_id))]
+        catalog = _Courses(client, year)
+        if course is not None:
+            targets = [catalog.resolve(course)]
         else:
-            targets = [(c.rc_id, c.name) for c in client.courses(year) if c.has_documents]
+            targets = [(c.rc_id, c.name) for c in catalog.items if c.has_documents]
         listing = [(name, rc, f) for rc, name in targets for f in client.course_files(rc)]
         if download is None:
             if json_:
@@ -360,10 +432,10 @@ def files(
                 "Supports de cours",
                 listing,
                 [
+                    ("#", lambda row: catalog.number(row[1])),
                     ("Matière", lambda row: row[0]),
                     ("Fichier", lambda row: row[2].filename),
                     ("Ajouté le", lambda row: _fmt_dt(row[2].update_date, "%d/%m/%Y")),
-                    ("rc_id/oc_id", lambda row: f"{row[1]}/{row[2].oc_id}"),
                 ],
             )
         fetched = skipped = 0
@@ -383,9 +455,10 @@ def files(
 
 
 @app.command()
-def syllabus(rc_id: int, json_: JsonOpt = False) -> None:
-    """Syllabus d'une matière (`rc_id` donné par `myges courses`)."""
+def syllabus(course: CourseArg, year: YearOpt = None, json_: JsonOpt = False) -> None:
+    """Syllabus d'une matière : `myges syllabus 3` ou `myges syllabus anglais`."""
     with _client() as client:
+        rc_id, _ = _Courses(client, year).resolve(course)
         data = client.syllabus(rc_id)
     if data is None:
         err.print("Pas de syllabus pour cette matière.")
@@ -469,13 +542,14 @@ def projects(year: YearOpt = None, json_: JsonOpt = False) -> None:
     """Projets de groupe."""
     with _client() as client:
         data = client.projects(year)
-    if json_:
-        return _dump(data)
+        if json_:
+            return _dump(data)
+        catalog = _Courses(client, year)
     _table(
         "Projets",
         data,
         [
-            ("id", lambda p: p.project_id),
+            ("#", lambda p: catalog.number(p.rc_id)),
             ("Projet", lambda p: p.name),
             ("Matière", lambda p: p.course_name),
             ("Groupes", lambda p: len(p.groups)),
@@ -488,13 +562,14 @@ def practicals(year: YearOpt = None, json_: JsonOpt = False) -> None:
     """Travaux pratiques (TP)."""
     with _client() as client:
         data = client.practicals(year)
-    if json_:
-        return _dump(data)
+        if json_:
+            return _dump(data)
+        catalog = _Courses(client, year)
     _table(
         "TP",
         data,
         [
-            ("id", lambda p: p.project_id),
+            ("#", lambda p: catalog.number(p.rc_id)),
             ("TP", lambda p: p.name),
             ("Matière", lambda p: p.course_name),
             (

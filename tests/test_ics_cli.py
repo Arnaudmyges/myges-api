@@ -15,6 +15,11 @@ from myges.cli import _default_download_dir, app, main
 from myges.client import API_URL
 
 
+def mock_courses(api: respx.MockRouter) -> None:
+    api.get("/me/years").mock(return_value=httpx.Response(200, json=fixture("getYears")))
+    api.get("/me/2026/courses").mock(return_value=httpx.Response(200, json=fixture("getCourses")))
+
+
 def events() -> list[m.AgendaEvent]:
     return [m.AgendaEvent.model_validate(e) for e in fixture("getAgenda")["result"]]
 
@@ -73,6 +78,7 @@ def test_cli_reports_api_errors() -> None:
 @pytest.mark.usefixtures("env")
 def test_cli_files_download_is_idempotent(tmp_path: Path) -> None:
     with respx.mock(base_url=API_URL) as api:
+        mock_courses(api)
         api.get("/me/500001/files").mock(
             return_value=httpx.Response(200, json=fixture("getCourseFiles"))
         )
@@ -84,7 +90,7 @@ def test_cli_files_download_is_idempotent(tmp_path: Path) -> None:
     assert first.exit_code == 0, first.output
     assert second.exit_code == 0, second.output
     assert dl.call_count == 2
-    saved = sorted(p.name for p in (tmp_path / "500001").iterdir())
+    saved = sorted(p.name for p in (tmp_path / "T1 - Réseaux avancés").iterdir())
     assert saved == ["Chapitre 1 - Introduction.pdf", "TP1_sources.zip"]
 
 
@@ -145,6 +151,7 @@ def test_cli_download_into_current_dir(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["myges", "files", "500001", "--download"])
     with respx.mock(base_url=API_URL) as api:
+        mock_courses(api)
         api.get("/me/500001/files").mock(
             return_value=httpx.Response(200, json=fixture("getCourseFiles"))
         )
@@ -154,7 +161,60 @@ def test_cli_download_into_current_dir(tmp_path: Path, monkeypatch: pytest.Monke
         with pytest.raises(SystemExit) as done:
             main()
     assert done.value.code == 0
-    assert sorted(p.name for p in (tmp_path / "500001").iterdir()) == [
+    assert sorted(p.name for p in (tmp_path / "T1 - Réseaux avancés").iterdir()) == [
         "Chapitre 1 - Introduction.pdf",
         "TP1_sources.zip",
     ]
+
+
+# ---------------------------------------------------------------- Désignation des matières
+# Fixture getCourses, triée par nom : #1 = « T1 - Anglais, niveau C1 » (500002),
+#                                      #2 = « T1 - Réseaux avancés » (500001).
+
+
+@pytest.mark.usefixtures("env")
+@pytest.mark.parametrize(
+    ("ref", "rc_id"),
+    [
+        ("1", 500002),  # numéro de la colonne #
+        ("2", 500001),
+        ("reseaux", 500001),  # nom partiel, sans accent
+        ("ANGLAIS c1", 500002),  # casse ignorée, plusieurs mots
+        ("500001", 500001),  # rc_id
+        ("424242", 424242),  # rc_id d'une autre année : transmis tel quel
+    ],
+)
+def test_course_reference_resolution(ref: str, rc_id: int) -> None:
+    with respx.mock(base_url=API_URL) as api:
+        mock_courses(api)
+        route = api.get(f"/me/{rc_id}/files").mock(
+            return_value=httpx.Response(200, json=fixture("getCourseFiles"))
+        )
+        result = CliRunner().invoke(app, ["files", ref])
+    assert result.exit_code == 0, result.output
+    assert route.called
+
+
+@pytest.mark.usefixtures("env")
+@pytest.mark.parametrize(("ref", "message"), [("t1", "ambigu"), ("chimie", "Aucune matière")])
+def test_course_reference_errors(ref: str, message: str) -> None:
+    with respx.mock(base_url=API_URL) as api:
+        mock_courses(api)
+        result = CliRunner().invoke(app, ["syllabus", ref])
+    assert result.exit_code == 2
+    assert message in result.output
+
+
+@pytest.mark.usefixtures("env")
+def test_course_numbers_shown_in_listings() -> None:
+    with respx.mock(base_url=API_URL) as api:
+        mock_courses(api)
+        api.get("/me/2026/grades").mock(return_value=httpx.Response(200, json=fixture("getGrades")))
+        courses = CliRunner().invoke(app, ["courses"])
+        grades = CliRunner().invoke(app, ["grades"])
+    assert courses.exit_code == 0, courses.output
+    assert grades.exit_code == 0, grades.output
+    for output in (courses.output, grades.output):
+        lines = [line for line in output.splitlines() if "Réseaux avancés" in line]
+        assert lines
+        assert "│ 2 " in lines[0] or lines[0].lstrip("│ ").startswith("2")

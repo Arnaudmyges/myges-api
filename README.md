@@ -62,11 +62,12 @@ myges agenda                     # 7 prochains jours
 myges agenda --from 2026-11-02 --to 2026-11-06 --ics semaine.ics
 myges grades                     # notes de l'année ; -y 2025 pour une autre
 myges absences
-myges courses                    # matières (avec leur rc_id)
+myges courses                    # matières, numérotées (colonne #)
 myges files                      # supports de cours
+myges files 3                    # ceux d'une matière : numéro # ou partie du nom (« anglais »)
 myges files --download           # tout télécharger dans le dossier courant (ou --download ~/cours)
                                  # relancer ne récupère que les nouveaux
-myges syllabus <rc_id>
+myges syllabus anglais
 myges projects
 myges practicals                 # TP
 myges steps                      # prochaines échéances
@@ -75,6 +76,9 @@ myges token                      # token à coller dans « Authorize » du Swagg
 
 Sous WSL, pour retrouver les supports dans l'Explorateur Windows, télécharger vers le disque
 Windows : `myges files --download /mnt/c/Users/<toi>/Documents/cours`.
+
+Une matière se désigne par son numéro `#` (affiché dans `courses`, `grades`, `files`,
+`agenda`, `projects`…), une partie de son nom, ou son `rc_id`.
 
 `myges --help` liste toutes les commandes, et `--json` donne la sortie brute de chacune.
 La session dure ~6 jours ; ensuite, relancer `myges login`.
