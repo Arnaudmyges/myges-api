@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone, tzinfo
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import httpx
+
     from .client import MyGES
     from .models import CampusEvent
 
@@ -153,18 +156,30 @@ def subscribe_at_opening(
         deadline = max(opening, server_now()) + RETRY_FOR
         tries: dict[int, int] = {}
         while wave and server_now() < deadline:
-            for event_id in list(wave):
-                response = client._send("POST", f"/me/events/{event_id}/subscribe")
+            # Tous les événements de la vague en même temps : une requête lente (serveur
+            # saturé à l'ouverture) ne doit pas retarder les autres.
+            def post(event_id: int) -> httpx.Response:
+                return client._send("POST", f"/me/events/{event_id}/subscribe")
+
+            with ThreadPoolExecutor(max_workers=len(wave)) as pool:
+                responses = list(zip(wave, pool.map(post, wave), strict=True))
+            for event_id, response in responses:
                 body = response.text[:300]
+                reason = _reason(body)
                 outcome.attempts.append(Attempt(server_now(), event_id, response.status_code, body))
                 tries[event_id] = tries.get(event_id, 0) + 1
-                if response.is_success:
+                closes = pending[event_id].end_subscription_date
+                if response.is_success or reason == "ALREADY_SUBSCRIBED":
                     log(f"✓ {event_id} : inscription acceptée (HTTP {response.status_code})")
                     wave.remove(event_id)
+                elif reason == "EVENT_CLOSED" and closes is not None and closes <= server_now():
+                    # Fermeture passée : inutile d'insister (cas d'une fermeture égale à
+                    # l'ouverture, saisie par l'école).
+                    log(f"✗ {event_id} : inscriptions closes côté myGES (fermeture {closes:%H:%M})")
+                    outcome.failed[event_id] = "inscriptions closes par myGES dès l'ouverture"
+                    wave.remove(event_id)
                 elif tries[event_id] == 1:
-                    log(
-                        f"… {event_id} : HTTP {response.status_code}, on réessaie ({_reason(body)})"
-                    )
+                    log(f"… {event_id} : HTTP {response.status_code}, on réessaie ({reason})")
             if wave:
                 sleep(RETRY_EVERY)
         for event_id in [i for i, e in pending.items() if (_opening(e) or opening) <= opening]:

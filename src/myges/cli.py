@@ -16,7 +16,7 @@ import sys
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, TypeVar
 from zoneinfo import ZoneInfo
@@ -28,6 +28,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("La CLI nécessite l'extra « cli » : pip install 'myges-api[cli]'")
 
+import httpx
 from pydantic import BaseModel
 
 from . import notify, schedule
@@ -1239,19 +1240,133 @@ def _broadcast(title: str, body: str) -> int:
     return failures
 
 
-def _take_snapshot(client: MyGES) -> watch_mod.Snapshot:
-    now = datetime.now(_TZ)
-    catalog = _Courses(client, None)
-    files = {
-        c.rc_id: (c.name, client.course_files(c.rc_id)) for c in catalog.items if c.has_documents
+# Rythme des vérifications. Les supports de cours sont prioritaires (vérifiés à chaque
+# passage) ; notes, absences et agenda changent moins souvent ou sont moins urgents.
+SLOW_EVERY = timedelta(minutes=30)
+YEAR_TTL = timedelta(days=1)
+OFFLINE_ALERT_AFTER = timedelta(hours=2)
+OUTBOX_LIMIT = 100
+LOG_LINES = 500
+
+
+def _ms(value: datetime) -> int:
+    return int(value.timestamp() * 1000)
+
+
+def _load_state(path: Path) -> dict[str, Any] | None:
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    if "snapshot" not in state and "grades" in state:  # format v1 : l'instantané seul
+        state = {"snapshot": {k: v for k, v in state.items() if k != "expired_notified"},
+                 "expired_notified": state.get("expired_notified", False)}  # fmt: skip
+    return state
+
+
+def _fetch(client: MyGES, state: dict[str, Any], now: datetime, full: bool) -> dict[str, Any]:
+    """Sections relues à ce passage (les autres sont reprises de l'instantané précédent)."""
+    checked = state.setdefault("checked", {})
+    year_at, year = checked.get("year", [0, None])
+    if year is None or now - datetime.fromtimestamp(year_at / 1000, timezone.utc) > YEAR_TTL:
+        year = max(client.years())
+        checked["year"] = [_ms(now), year]
+    courses = [c for c in client.courses(year) if c.has_documents]
+    sections: dict[str, Any] = {
+        "files": watch_mod.files_section(
+            {c.rc_id: (c.name, client.course_files(c.rc_id)) for c in courses}
+        )
     }
-    return watch_mod.snapshot(
-        grades=client.grades(),
-        absences=client.absences(),
-        files=files,
-        agenda=client.agenda(now, now + watch_mod.AGENDA_HORIZON),
-        now=now,
-    )
+    if full:
+        sections["grades"] = watch_mod.grades_section(client.grades(year))
+        sections["absences"] = watch_mod.absences_section(client.absences(year))
+        sections["agenda"] = watch_mod.agenda_section(
+            client.agenda(now, now + watch_mod.AGENDA_HORIZON), now
+        )
+        checked["slow"] = _ms(now)
+    return sections
+
+
+@contextlib.contextmanager
+def _exclusive(path: Path) -> Iterator[bool]:
+    """Verrou entre passages : un passage lent ne doit pas en chevaucher un autre."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        import fcntl
+    except ImportError:  # Windows : la tâche planifiée ne se chevauche pas d'elle-même
+        yield True
+        return
+    with path.open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+
+
+def _deliver(state: dict[str, Any], changes: list[watch_mod.Change]) -> int:
+    """Envoie à chaque canal ses nouveautés + celles restées en souffrance ; renvoie le
+    nombre de canaux en échec (leurs nouveautés sont gardées pour le passage suivant)."""
+    outbox: dict[str, list[dict[str, str]]] = state.setdefault("outbox", {})
+    fresh = [{"kind": c.kind, "text": c.text} for c in changes]
+    failures = 0
+    for channel in _channels():
+        key = notify.describe(channel)
+        queued = (outbox.get(key, []) + fresh)[-OUTBOX_LIMIT:]
+        if not queued:
+            continue
+        title, body = notify.format_changes([watch_mod.Change(**c) for c in queued])
+        try:
+            notify.send(channel, title, body)
+        except Exception as exc:  # un canal en panne ne doit pas bloquer les autres
+            failures += 1
+            outbox[key] = queued
+            err.print(f"[red]Échec d'envoi[/] ({key}) : {exc} — nouvel essai au prochain passage")
+        else:
+            outbox.pop(key, None)
+    known = {notify.describe(c) for c in _channels()}
+    for key in [k for k in outbox if k not in known]:  # canal supprimé entre-temps
+        del outbox[key]
+    return failures
+
+
+def _log(username: str, line: str) -> None:
+    path = _state_path(username).with_name("watch.log")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()[-(LOG_LINES - 1) :]
+    except OSError:
+        lines = []
+    lines.append(f"{datetime.now(_TZ):%Y-%m-%d %H:%M:%S} {line}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _resume_interrupted_registrations(now: datetime) -> list[int]:
+    """Relance les pré-inscriptions dont l'attente a été tuée (machine éteinte…)."""
+    lost = [
+        p.event_id
+        for p in pending_mod.load()
+        if pending_mod.alive(p.pid) is False and p.opens_at > now - timedelta(minutes=3)
+    ]
+    if lost:
+        _subscribe_in_background(lost)
+    return lost
+
+
+def _offline(state: dict[str, Any], now: datetime, reason: str, notify_on: bool) -> None:
+    failures = state.setdefault("failures", {})
+    failures.setdefault("since", _ms(now))
+    failures["count"] = failures.get("count", 0) + 1
+    since = datetime.fromtimestamp(failures["since"] / 1000, timezone.utc)
+    if now - since >= OFFLINE_ALERT_AFTER and not failures.get("alerted") and notify_on:
+        _broadcast(
+            "myGES : alertes interrompues",
+            f"⚠️ myGES injoignable depuis {_fmt_dt(since, '%H:%M')} ({reason}). "
+            "Les alertes reprendront toutes seules.",
+        )
+        failures["alerted"] = True
 
 
 @app.command()
@@ -1264,14 +1379,20 @@ def watch(
     ] = False,
     install: Annotated[
         bool,
-        typer.Option("--install", help="Lancer automatiquement toutes les --every minutes (cron)."),
+        typer.Option("--install", help="Lancer automatiquement toutes les --every minutes."),
     ] = False,
     uninstall: Annotated[
         bool, typer.Option("--uninstall", help="Arrêter le lancement automatique.")
     ] = False,
-    every: Annotated[int, typer.Option(help="Intervalle en minutes, avec --install.")] = 30,
+    status: Annotated[
+        bool, typer.Option("--status", help="État des alertes : planification, dernier passage.")
+    ] = False,
+    every: Annotated[
+        int,
+        typer.Option(help=f"Intervalle en minutes, avec --install (min. {schedule.MIN_EVERY})."),
+    ] = schedule.DEFAULT_EVERY,
 ) -> None:
-    """Signaler les nouveautés depuis le dernier passage : notes, absences, supports, agenda.
+    """Signaler les nouveautés : supports de cours, notes, absences, agenda.
 
     Les nouveautés sont envoyées aux canaux configurés avec `myges notify add`. Le premier
     passage enregistre seulement l'état. `myges watch --install` le lance automatiquement.
@@ -1283,53 +1404,127 @@ def watch(
         raise _not_logged_in()
     if install:
         return _watch_install(every)
+    if status:
+        return _watch_status(username)
     path = _state_path(username)
-    try:
-        previous: dict[str, Any] | None = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        previous = None
+    with _exclusive(path.with_suffix(".lock")) as acquired:
+        if not acquired:
+            return  # un autre passage est en cours : il fera le travail
+        _watch_pass(username, path, quiet=quiet, no_notify=no_notify)
+
+
+def _watch_pass(username: str, path: Path, *, quiet: bool, no_notify: bool) -> None:
+    now = datetime.now(_TZ)
+    state = _load_state(path) or {}
+    previous: dict[str, Any] | None = state.get("snapshot")
+    slow_at = state.get("checked", {}).get("slow", 0)
+    # À la main (pas --quiet) on vérifie tout ; en tâche planifiée, selon le rythme.
+    full = (
+        previous is None
+        or not quiet
+        or now - datetime.fromtimestamp(slow_at / 1000, timezone.utc) >= SLOW_EVERY
+    )
 
     try:
         with MyGES(username, _current_password()) as client:
-            current = _take_snapshot(client)
+            sections = _fetch(client, state, now, full)
     except TokenExpiredError:
-        # Une seule alerte par expiration, pas une toutes les 30 minutes.
-        if previous is not None and not previous.get("expired_notified"):
+        # Une seule alerte par expiration, pas une à chaque passage.
+        if previous is not None and not state.get("expired_notified"):
             if not no_notify:
                 _broadcast(
                     "myGES : session expirée",
                     "ℹ️ La session myGES a expiré : relancer `myges login` "
                     "(ou `myges login --save-password` pour ne plus avoir à le faire).",
                 )
-            previous["expired_notified"] = True
-            _write_state(path, previous)
+            state["expired_notified"] = True
+        _write_state(path, state)
+        _log(username, "session expirée")
         err.print("[red]Session expirée.[/] Relancer `myges login`.")
         raise typer.Exit(1) from None
-    except MyGESError as exc:
+    except (MyGESError, httpx.HTTPError) as exc:
+        _offline(state, now, type(exc).__name__, notify_on=not no_notify)
+        _write_state(path, state)
+        _log(username, f"échec : {exc}")
         err.print(f"[red]Erreur :[/] {exc}")
         raise typer.Exit(1) from exc
 
-    _write_state(path, current)
+    state["expired_notified"] = False
+    if state.get("failures", {}).get("alerted") and not no_notify:
+        _broadcast("myGES : alertes rétablies", "✅ myGES est de nouveau joignable.")
+    state.pop("failures", None)
+
+    current = {**(previous or {}), **sections, "taken_at": _ms(now)}
     if previous is None:
+        state["snapshot"] = current
+        _write_state(path, state)
+        _log(username, "état initial enregistré")
         console.print(
-            f"État initial enregistré ({len(current['grades'])} matières notées, "
+            f"État initial enregistré ({len(current.get('grades', {}))} matières notées, "
             f"{sum(len(f['items']) for f in current['files'].values())} supports, "
-            f"{len(current['agenda'])} cours à venir). "
+            f"{len(current.get('agenda', {}))} cours à venir). "
             "Les prochains passages signaleront les nouveautés."
         )
         if not _channels():
             console.print("[dim]Aucun canal de notification : voir `myges notify add --help`.[/]")
         return
 
+    current, state["empty_streaks"] = watch_mod.stabilize(
+        previous, current, state.get("empty_streaks", {})
+    )
     changes = watch_mod.diff(previous, current, _TZ)
+    state["snapshot"] = current
+    failed = 0 if no_notify else _deliver(state, changes)
+    _write_state(path, state)  # état enregistré avant toute relance, quoi qu'il arrive
+    resumed = _resume_interrupted_registrations(now)
+    _log(
+        username,
+        f"{'complet' if full else 'supports'} : {len(changes)} nouveauté(s)"
+        + (f", {failed} canal(aux) en échec" if failed else "")
+        + (f", pré-inscriptions relancées : {resumed}" if resumed else ""),
+    )
     if not changes:
         if not quiet:
             console.print("[dim]Rien de nouveau.[/]")
         return
     title, body = notify.format_changes(changes)
     console.print(f"[bold]{title}[/]\n{body}")
-    if not no_notify and _broadcast(title, body):
+    if failed:
         raise typer.Exit(1)
+
+
+def _watch_status(username: str) -> None:
+    state = _load_state(_state_path(username)) or {}
+    entry = None
+    with contextlib.suppress(schedule.ScheduleError, OSError):
+        entry = schedule.find_entry(schedule.read_crontab()) if not schedule.is_windows() else None
+    if entry:
+        every = entry.split()[0].removeprefix("*/")
+        console.print(f"Lancement automatique : [green]actif[/], toutes les {every} min")
+    elif schedule.installed():
+        console.print("Lancement automatique : [green]actif[/]")
+    else:
+        console.print("Lancement automatique : [yellow]inactif[/] — `myges watch --install`")
+    names = [notify.describe(c).split()[0] for c in _channels()]
+    if names:
+        console.print(f"Canaux : {', '.join(names)}")
+    else:
+        console.print("Canaux : [yellow]aucun[/] — `myges notify add`")
+    if _current_password() is None:
+        console.print("Session : [yellow]mot de passe non enregistré[/] (alertes coupées à "
+                      "l'expiration, ~6 jours) — `myges login --save-password`")  # fmt: skip
+    queued = sum(len(v) for v in state.get("outbox", {}).values())
+    if queued:
+        console.print(f"En attente d'envoi : [yellow]{queued}[/] nouveauté(s)")
+    if state.get("failures"):
+        since = datetime.fromtimestamp(state["failures"]["since"] / 1000, timezone.utc)
+        console.print(f"[yellow]myGES injoignable depuis {_fmt_dt(since)}[/]")
+    log = _state_path(username).with_name("watch.log")
+    try:
+        last = log.read_text(encoding="utf-8").splitlines()[-1]
+        console.print(f"Dernier passage : {last}")
+    except (OSError, IndexError):
+        console.print("Dernier passage : [dim]aucun[/]")
 
 
 def _watch_install(every: int) -> None:

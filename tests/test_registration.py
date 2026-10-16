@@ -89,6 +89,12 @@ class FakeSchool:
     def subscribe(self, request: httpx.Request, event_id: str) -> httpx.Response:
         event = self.events[int(event_id)]
         self.attempts.setdefault(int(event_id), []).append(self.now())
+        if event["subscribed"]:  # comportement observé le 16/10/2026
+            return httpx.Response(400, json={"response_code": 1, "result": {
+                "status": 400, "message": "ALREADY_SUBSCRIBED"}})  # fmt: skip
+        if self.now() >= event["closes"]:
+            return httpx.Response(403, json={"response_code": 1, "result": {
+                "status": 403, "message": "EVENT_CLOSED"}})  # fmt: skip
         if self.now() < event["opens"] or not event["accept"]:
             message = "Complet" if not event["accept"] else "Inscriptions pas encore ouvertes"
             return httpx.Response(
@@ -373,3 +379,53 @@ def test_already_open_registers_right_away(state: Path, monkeypatch: pytest.Monk
     assert result.exit_code == 0, result.output
     assert post.call_count == 1
     assert "Inscrit" in result.output
+
+
+# ---------------------------------------------------------------- Réponses réelles (16/10/2026)
+
+
+def test_event_closing_at_opening_stops_immediately() -> None:
+    # Cas de l'événement 4525 : fermeture saisie à la même minute que l'ouverture.
+    clock = FakeClock(OPENING - timedelta(minutes=5))
+    school = FakeSchool(clock)
+    school.add(4501, OPENING, closes=OPENING)
+    with respx.mock() as router:
+        outcome, _ = school.run(router, 4501)
+    assert outcome.failed == {4501: "inscriptions closes par myGES dès l'ouverture"}
+    assert school.attempts[4501][-1] <= OPENING + timedelta(seconds=1)  # arrêt immédiat, pas 3 min
+
+
+def test_already_subscribed_elsewhere_counts_as_success() -> None:
+    # Deux machines pré-inscrites : la seconde reçoit ALREADY_SUBSCRIBED.
+    clock = FakeClock(OPENING - timedelta(minutes=5))
+    school = FakeSchool(clock)
+    school.add(4501, OPENING)
+
+    def other_machine_wins(listing: int) -> None:
+        if listing == 2:  # juste avant l'ouverture… l'autre machine passe la première
+            school.events[4501]["subscribed"] = False
+
+    original = school.subscribe
+
+    def subscribe(request: httpx.Request, event_id: str) -> httpx.Response:
+        if school.now() >= OPENING:
+            school.events[int(event_id)]["subscribed"] = True  # déjà fait ailleurs
+        return original(request, event_id)
+
+    school.subscribe = subscribe  # type: ignore[method-assign]
+    school.on_listing = other_machine_wins
+    with respx.mock() as router:
+        outcome, _ = school.run(router, 4501)
+    assert outcome.subscribed == [4501]
+    assert outcome.failed == {}
+
+
+def test_events_opening_together_are_tried_together() -> None:
+    clock = FakeClock(OPENING - timedelta(minutes=5))
+    school = FakeSchool(clock)
+    school.add(4501, OPENING)
+    school.add(4502, OPENING)
+    with respx.mock() as router:
+        outcome, _ = school.run(router, 4501, 4502)
+    assert sorted(outcome.subscribed) == [4501, 4502]
+    assert school.attempts[4501][0] == school.attempts[4502][0]  # même salve

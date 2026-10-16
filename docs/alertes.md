@@ -2,10 +2,13 @@
 
 `myges watch` compare l'état actuel de myGES à celui de son passage précédent et signale :
 
+- les **nouveaux supports de cours**, vérifiés toutes les 5 minutes ;
 - les nouvelles notes, notes d'examen et moyennes modifiées ;
 - les nouvelles absences ;
-- les nouveaux supports de cours ;
 - les cours ajoutés, déplacés ou annulés dans les 14 prochains jours.
+
+Notes, absences et agenda sont vérifiés toutes les 30 minutes : c'est ce qui permet de
+surveiller les supports de près sans surcharger myGES.
 
 Le premier passage enregistre seulement l'état actuel.
 
@@ -34,7 +37,8 @@ vous seul. Gmail : activer la validation en deux étapes et créer un
 
 ```bash
 myges login --save-password      # la session se renouvelle sans vous
-myges watch --install            # vérifie toutes les 30 min (--every 10 pour plus souvent)
+myges watch --install            # lancement automatique (toutes les 5 min)
+myges watch --status             # vérifier que tout est en place
 ```
 
 `--install` ajoute une ligne à votre crontab (Linux, macOS, WSL) ou une tâche planifiée
@@ -46,6 +50,15 @@ Arrêter : `myges watch --uninstall`.
 
 Sans `--save-password`, les alertes s'arrêtent à l'expiration de la session (~6 jours) : une
 seule alerte vous demande alors de relancer `myges login`.
+
+## Si un envoi échoue
+
+- Un canal indisponible (quota ntfy, Discord en panne…) ne fait rien perdre : les nouveautés
+  sont renvoyées au passage suivant.
+- Si myGES est injoignable plus de 2 heures, une alerte le signale, puis une autre quand
+  c'est rétabli.
+- Une pré-inscription à un événement interrompue par un arrêt de la machine est relancée
+  automatiquement.
 
 ## Options
 

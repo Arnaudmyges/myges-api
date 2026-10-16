@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 MARKER = "# myges-api: watch"
+DEFAULT_EVERY = 5  # minutes : les supports de cours doivent arriver vite
+MIN_EVERY = 5  # en dessous, la charge sur myGES deviendrait déraisonnable
 WINDOWS_TASK = "myges-watch"
 
 
@@ -99,8 +101,8 @@ def cron_running() -> bool | None:
 
 def install(every: int) -> str:
     """Installe la planification ; renvoie une description de ce qui a été fait."""
-    if not 1 <= every <= 59:
-        raise ScheduleError("--every doit être compris entre 1 et 59 minutes.")
+    if not MIN_EVERY <= every <= 59:
+        raise ScheduleError(f"--every doit être compris entre {MIN_EVERY} et 59 minutes.")
     exe = executable()
     if is_windows():
         command = f'"{exe}" watch --quiet'

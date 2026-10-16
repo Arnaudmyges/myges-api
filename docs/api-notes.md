@@ -95,3 +95,19 @@ En sondant l'API sur le modèle `/me/{rc_id}/…` :
 Documents administratifs (certificats de scolarité, admission), factures et points OPEN :
 présents sur `myges.fr` (JSF + CAS), aucun équivalent trouvé dans l'API parmi ~400 chemins
 testés en `GET`.
+
+## 2026-10-16 — Inscription aux événements
+
+Observé en réel à l'ouverture des inscriptions du « Cloud Day » (12:00) :
+
+- `POST /me/events/{id}/subscribe` sans corps → `201`, corps vide.
+- Second `POST` alors qu'on est déjà inscrit → `400`, `result.message = "ALREADY_SUBSCRIBED"`,
+  sans effet : la route est idempotente côté résultat.
+- Inscriptions fermées → `403`, `result.message = "EVENT_CLOSED"`. Un événement avait sa
+  fermeture saisie **à la même minute** que son ouverture : il a répondu `EVENT_CLOSED` dès la
+  première seconde. La date de fermeture de `/me/events` permet de le détecter à l'avance.
+- `DELETE /me/events/{id}/unsubscribe` → `200`, `result: null`.
+- À l'ouverture, une requête a mis ~3 s à revenir (serveur chargé) : les inscriptions
+  simultanées sont envoyées en parallèle plutôt qu'à la suite.
+- `/me/events` ne renvoie aucun en-tête de cache (`Cache-Control: no-store`, pas d'`ETag`) :
+  toute surveillance relit les listes en entier.

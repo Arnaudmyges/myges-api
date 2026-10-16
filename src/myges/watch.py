@@ -41,6 +41,43 @@ def _ms(value: datetime) -> int:
     return int(value.timestamp() * 1000)
 
 
+def grades_section(grades: Sequence[Grade]) -> dict[str, Any]:
+    return {
+        str(g.rc_id): {
+            "course": g.course,
+            "grades": list(g.grades),
+            "exam": g.exam,
+            "average": g.average,
+        }
+        for g in grades
+    }
+
+
+def absences_section(absences: Sequence[Absence]) -> list[str]:
+    return sorted(f"{_ms(a.date)}|{a.course_name}|{int(a.justified)}" for a in absences)
+
+
+def files_section(files: Mapping[int, tuple[str, Sequence[CourseFile]]]) -> dict[str, Any]:
+    return {
+        str(rc_id): {"course": name, "items": {str(f.oc_id): f.filename for f in items}}
+        for rc_id, (name, items) in files.items()
+    }
+
+
+def agenda_section(agenda: Sequence[AgendaEvent], now: datetime) -> dict[str, Any]:
+    horizon = now + AGENDA_HORIZON
+    return {
+        str(e.reservation_id): {
+            "name": e.name,
+            "start": _ms(e.start_date),
+            "end": _ms(e.end_date),
+            "room": e.location or e.modality or "",
+        }
+        for e in agenda
+        if now <= e.start_date <= horizon
+    }
+
+
 def snapshot(
     grades: Sequence[Grade],
     absences: Sequence[Absence],
@@ -48,35 +85,51 @@ def snapshot(
     agenda: Sequence[AgendaEvent],
     now: datetime,
 ) -> Snapshot:
-    """Instantané sérialisable. ``files`` : ``{rc_id: (nom de la matière, supports)}``."""
-    horizon = now + AGENDA_HORIZON
+    """Instantané complet. ``files`` : ``{rc_id: (nom de la matière, supports)}``."""
     return {
         "taken_at": _ms(now),
-        "grades": {
-            str(g.rc_id): {
-                "course": g.course,
-                "grades": list(g.grades),
-                "exam": g.exam,
-                "average": g.average,
-            }
-            for g in grades
-        },
-        "absences": sorted(f"{_ms(a.date)}|{a.course_name}|{int(a.justified)}" for a in absences),
-        "files": {
-            str(rc_id): {"course": name, "items": {str(f.oc_id): f.filename for f in items}}
-            for rc_id, (name, items) in files.items()
-        },
-        "agenda": {
-            str(e.reservation_id): {
-                "name": e.name,
-                "start": _ms(e.start_date),
-                "end": _ms(e.end_date),
-                "room": e.location or e.modality or "",
-            }
-            for e in agenda
-            if now <= e.start_date <= horizon
-        },
+        "grades": grades_section(grades),
+        "absences": absences_section(absences),
+        "files": files_section(files),
+        "agenda": agenda_section(agenda, now),
     }
+
+
+EMPTY_CONFIRM = 3  # passages consécutifs avant de croire qu'une section s'est vidée
+
+
+def stabilize(
+    previous: Snapshot, current: Snapshot, streaks: dict[str, int]
+) -> tuple[Snapshot, dict[str, int]]:
+    """Ignore une section qui se vide brusquement tant que ce n'est pas confirmé.
+
+    myGES renvoie parfois une liste vide (ou un 204) le temps d'un incident : sans cette
+    précaution, tout ce qu'elle contenait serait signalé « nouveau » au passage suivant.
+    Une section réellement vidée (vacances, nouvelle année) est acceptée après
+    ``EMPTY_CONFIRM`` passages consécutifs.
+    """
+    result = {**current}
+    streaks = dict(streaks)
+    pairs: list[tuple[str, Any, Any, Any]] = [
+        (key, previous.get(key), current.get(key), None) for key in ("grades", "absences", "agenda")
+    ]
+    old_files, new_files = previous.get("files", {}), dict(current.get("files", {}))
+    for rc_id, old in old_files.items():
+        pairs.append(
+            (f"files:{rc_id}", old.get("items"), (new_files.get(rc_id) or {}).get("items"), rc_id)
+        )
+    for key, before, after, rc_id in pairs:
+        if before and not after:
+            streaks[key] = streaks.get(key, 0) + 1
+            if streaks[key] < EMPTY_CONFIRM:
+                if rc_id is None:
+                    result[key] = before
+                else:
+                    new_files[rc_id] = old_files[rc_id]
+                continue
+        streaks.pop(key, None)
+    result["files"] = new_files
+    return result, streaks
 
 
 def diff(old: Snapshot, new: Snapshot, tz: Any = timezone.utc) -> list[Change]:

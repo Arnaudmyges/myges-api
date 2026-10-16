@@ -13,12 +13,11 @@ import pytest
 import respx
 from typer.testing import CliRunner
 
-from conftest import fixture
+from conftest import fixture, mock_api
 from myges import models as m
 from myges import notify
 from myges.auth import AUTH_URL
 from myges.cli import app
-from myges.client import API_URL
 from myges.watch import Change, diff, snapshot
 
 NOW = datetime(2026, 10, 17, 12, 0, tzinfo=timezone.utc)  # la veille du 1er créneau (18/10)
@@ -175,47 +174,6 @@ def test_email(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------- Commande watch
-
-
-@pytest.fixture
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    for var in ("MYGES_TOKEN", "MYGES_PASSWORD"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("MYGES_USERNAME", "jdupont")
-    for var in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
-        monkeypatch.setenv(var, str(tmp_path / var.lower()))
-    config = tmp_path / "xdg_config_home" / "myges" / "config.json"
-    config.parent.mkdir(parents=True)
-    config.write_text(
-        json.dumps({"notify": [{"type": "ntfy", "server": "https://ntfy.sh", "topic": "myges-t"}]})
-    )
-    # Token valide en cache : pas d'authentification nécessaire.
-    cache = tmp_path / "xdg_cache_home" / "myges" / "tokens.json"
-    cache.parent.mkdir(parents=True)
-    cache.write_text(
-        json.dumps(
-            {
-                "jdupont": {
-                    "access_token": "tok",
-                    "expires_in": 600000,
-                    "obtained_at": datetime.now(timezone.utc).isoformat(),
-                }
-            }
-        )
-    )
-    return tmp_path
-
-
-def mock_api(router: respx.MockRouter, grades: dict[str, Any]) -> None:
-    def get(path: str, response: httpx.Response) -> None:
-        router.get(f"{API_URL}{path}").mock(return_value=response)
-
-    get("/me/years", httpx.Response(200, json=fixture("getYears")))
-    get("/me/2026/courses", httpx.Response(200, json=fixture("getCourses")))
-    get("/me/2026/grades", httpx.Response(200, json=grades))
-    get("/me/2026/absences", httpx.Response(204))
-    get("/me/500001/files", httpx.Response(200, json=fixture("getCourseFiles")))
-    get("/me/agenda", httpx.Response(200, json=fixture("getAgenda")))
 
 
 def test_watch_baseline_then_notifies_new_grade(home: Path) -> None:

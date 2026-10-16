@@ -788,16 +788,26 @@ paths:
       operationId: subscribeEvent
       summary: S'inscrire à un événement
       description: |
-        ⚠️ **Écriture, non vérifiée.** Existence établie par la réponse `405` à un `GET`
-        (en-tête `Allow: POST`) ; jamais appelée par ce projet. Corps et réponse inconnus.
-      x-verified: false
+        Écriture. Sans corps de requête. Les inscriptions ouvrent et ferment aux dates
+        `start_subscription_date` / `end_subscription_date` de `GET /me/events`.
+      x-verified: "2026-10-16"
       parameters:
-        - name: eventId
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/EventId"
       responses:
-        "200": { description: Inscription enregistrée (format non observé). }
+        "201": { description: Inscription enregistrée. Corps vide. }
+        "400":
+          description: "Déjà inscrit : `result.message` vaut `ALREADY_SUBSCRIBED` (sans effet)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: |
+            Inscriptions fermées : `result.message` vaut `EVENT_CLOSED`. Observé aussi quand
+            l'école a saisi une fermeture égale à l'ouverture (l'événement ferme à l'instant
+            où il ouvre).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /me/events/{eventId}/unsubscribe:
@@ -805,18 +815,16 @@ paths:
       tags: [Vie de campus]
       operationId: unsubscribeEvent
       summary: Se désinscrire d'un événement
-      description: |
-        ⚠️ **Écriture, non vérifiée.** Existence établie par la réponse `405` à un `GET`
-        (en-tête `Allow: DELETE`). Possible tant que les inscriptions sont ouvertes (d'après
-        le site web).
-      x-verified: false
+      description: Écriture. Possible tant que les inscriptions sont ouvertes.
+      x-verified: "2026-10-16"
       parameters:
-        - name: eventId
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/EventId"
       responses:
-        "200": { description: Désinscription enregistrée (format non observé). }
+        "200":
+          description: Désinscription enregistrée (`result` nul).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /me/schools:
@@ -932,6 +940,12 @@ components:
       in: path
       required: true
       description: Identifiant de groupe de projet (`project_group_id`).
+      schema: { type: integer, format: int64 }
+    EventId:
+      name: eventId
+      in: path
+      required: true
+      description: Identifiant d'événement (`event_id`, aussi visible dans l'adresse `myges.fr/common/event/{id}`).
       schema: { type: integer, format: int64 }
     Page:
       name: page
