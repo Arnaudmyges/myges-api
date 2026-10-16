@@ -800,6 +800,25 @@ paths:
         "200": { description: Inscription enregistrée (format non observé). }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /me/events/{eventId}/unsubscribe:
+    delete:
+      tags: [Vie de campus]
+      operationId: unsubscribeEvent
+      summary: Se désinscrire d'un événement
+      description: |
+        ⚠️ **Écriture, non vérifiée.** Existence établie par la réponse `405` à un `GET`
+        (en-tête `Allow: DELETE`). Possible tant que les inscriptions sont ouvertes (d'après
+        le site web).
+      x-verified: false
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Désinscription enregistrée (format non observé). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /me/schools:
     get:
       tags: [Vie de campus]

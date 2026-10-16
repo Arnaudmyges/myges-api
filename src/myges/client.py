@@ -420,9 +420,14 @@ class MyGES(_BaseClient):
         return _parse_list(m.CampusEvent, self._get("/me/events"))
 
     def subscribe_event(self, event_id: int) -> Any:
-        """⚠️ Écriture non vérifiée. Nécessite ``allow_writes=True``."""
+        """S'inscrire à un événement (écriture). Nécessite ``allow_writes=True``."""
         self._check_write("subscribe_event")
         return self.request("POST", f"/me/events/{event_id}/subscribe")
+
+    def unsubscribe_event(self, event_id: int) -> Any:
+        """Se désinscrire d'un événement (écriture). Nécessite ``allow_writes=True``."""
+        self._check_write("unsubscribe_event")
+        return self.request("DELETE", f"/me/events/{event_id}/unsubscribe")
 
     def partners(self) -> list[m.Partner]:
         return _parse_list(m.Partner, self._get("/me/partners"))
@@ -662,6 +667,10 @@ class AsyncMyGES(_BaseClient):
     async def subscribe_event(self, event_id: int) -> Any:
         self._check_write("subscribe_event")
         return await self.request("POST", f"/me/events/{event_id}/subscribe")
+
+    async def unsubscribe_event(self, event_id: int) -> Any:
+        self._check_write("unsubscribe_event")
+        return await self.request("DELETE", f"/me/events/{event_id}/unsubscribe")
 
     async def partners(self) -> list[m.Partner]:
         return _parse_list(m.Partner, await self._get("/me/partners"))

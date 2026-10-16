@@ -140,7 +140,7 @@ def _not_logged_in() -> typer.Exit:
 
 
 @contextmanager
-def _client(password: str | None = None) -> Iterator[MyGES]:
+def _client(password: str | None = None, *, allow_writes: bool = False) -> Iterator[MyGES]:
     token = os.environ.get("MYGES_TOKEN")
     username = _current_username()
     if not token and not username:
@@ -150,6 +150,7 @@ def _client(password: str | None = None) -> Iterator[MyGES]:
             username,
             password or _current_password(),
             token=token,
+            allow_writes=allow_writes,
         ) as client:
             yield client
     except MyGESError as exc:
@@ -767,23 +768,98 @@ def news(
     )
 
 
-@app.command()
-def events(json_: JsonOpt = False) -> None:
-    """Événements du campus."""
+events_app = typer.Typer(help="Événements du campus et inscriptions.")
+app.add_typer(events_app, name="events")
+
+
+@events_app.callback(invoke_without_command=True)
+def events(ctx: typer.Context, json_: JsonOpt = False) -> None:
+    """Événements du campus, avec l'ouverture des inscriptions (inscription : `subscribe`)."""
+    if ctx.invoked_subcommand is not None:
+        return
     with _client() as client:
         data = client.events()
     if json_:
         return _dump(data)
+    now = datetime.now(_TZ)
+    upcoming = [e for e in data if e.event_date is None or e.event_date >= now]
     _table(
-        "Événements",
-        sorted(data, key=lambda e: e.event_date or datetime.min.replace(tzinfo=_TZ)),
+        "Événements à venir",
+        sorted(upcoming, key=lambda e: e.event_date or now),
         [
+            ("id", lambda e: e.event_id),
             ("Date", lambda e: _fmt_dt(e.event_date)),
             ("Événement", lambda e: e.event_title),
-            ("Lieu", lambda e: e.location),
-            ("Inscrit", lambda e: "oui" if e.is_participant_subscribed else ""),
+            ("Inscriptions", lambda e: _subscription_window(e, now)),
+            ("Inscrit", lambda e: "[green]oui[/]" if e.is_participant_subscribed else ""),
         ],
     )
+
+
+def _subscription_window(event: Any, now: datetime) -> str:
+    opens, closes = event.start_subscription_date, event.end_subscription_date
+    if opens and opens > now:
+        return f"ouvrent {_fmt_dt(opens)}"
+    if closes and closes > now:
+        return f"ouvertes → {_fmt_dt(closes, '%d/%m')}"
+    return "[dim]closes[/]"
+
+
+@events_app.command("subscribe")
+def events_subscribe(
+    event_ids: Annotated[list[int], typer.Argument(help="Identifiants (colonne id, ou l'URL).")],
+) -> None:
+    """S'inscrire, dès l'ouverture des inscriptions si elles ne sont pas encore ouvertes.
+
+    La commande attend l'heure d'ouverture (horloge du serveur), puis réessaie toutes les
+    demi-secondes pendant 3 minutes. Laisser le terminal ouvert (ou utiliser tmux).
+    """
+    from .registration import subscribe_at_opening
+
+    with _client(allow_writes=True) as client:
+        outcome = subscribe_at_opening(client, event_ids, log=console.print)
+        titles = {e.event_id: e.event_title for e in client.events()}
+    for event_id in outcome.subscribed:
+        console.print(f"[green]Inscrit[/] : {titles.get(event_id, event_id)}")
+    for event_id in outcome.already:
+        console.print(f"[dim]Déjà inscrit : {titles.get(event_id, event_id)}[/]")
+    for event_id, reason in outcome.failed.items():
+        err.print(f"[red]Échec[/] {event_id} ({titles.get(event_id, '?')}) : {reason}")
+    _log_attempts(outcome)
+    if outcome.subscribed or outcome.failed:
+        lines = [f"✅ Inscrit : {titles.get(i, i)}" for i in outcome.subscribed]
+        lines += [f"❌ {titles.get(i, i)} : {r}" for i, r in outcome.failed.items()]
+        _broadcast("myGES : inscriptions", "\n".join(lines))
+    if outcome.failed:
+        raise typer.Exit(1)
+
+
+def _log_attempts(outcome: Any) -> None:
+    """Garde la trace brute des tentatives (diagnostic si l'école change ses règles)."""
+    if not outcome.attempts:
+        return
+    base = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    path = Path(base) / "myges" / "events-subscribe.log"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with path.open("a", encoding="utf-8") as fh:
+        for a in outcome.attempts:
+            fh.write(f"{a.at.isoformat()} event={a.event_id} HTTP {a.status} {a.body}\n")
+
+
+@events_app.command("unsubscribe")
+def events_unsubscribe(
+    event_ids: Annotated[list[int], typer.Argument(help="Identifiants des événements.")],
+) -> None:
+    """Se désinscrire (possible tant que les inscriptions sont ouvertes)."""
+    with _client(allow_writes=True) as client:
+        for event_id in event_ids:
+            response = client._send("DELETE", f"/me/events/{event_id}/unsubscribe")
+            if response.is_success:
+                console.print(f"Désinscrit de {event_id}.")
+            else:
+                err.print(
+                    f"[red]Échec[/] {event_id} : HTTP {response.status_code} {response.text[:200]}"
+                )
 
 
 @app.command()
