@@ -34,6 +34,7 @@ gcal = ["google-auth>=2.20"]
 myges = "myges.cli:main"
 
 [project.urls]
+Homepage = "https://arnaudmyges.github.io/myges-api/"
 Documentation = "https://arnaudmyges.github.io/myges-api/docs/"
 Source = "https://github.com/Arnaudmyges/myges-api"
 
