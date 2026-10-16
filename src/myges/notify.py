@@ -31,6 +31,8 @@ _ICONS = {
     "agenda_added": "📅",
     "agenda_removed": "❌",
     "agenda_moved": "🔁",
+    "event_new": "🎟️",
+    "reminder": "⏰",
     "info": "ℹ️",
 }
 
@@ -59,11 +61,25 @@ def format_changes(changes: Sequence[Change]) -> tuple[str, str]:
     return title, body
 
 
-def send(channel: Channel, title: str, body: str, *, timeout: float = 15.0) -> None:
-    """Envoie une notification ; lève une exception si le canal la refuse."""
+Action = dict[str, Any]  # {"type": "view"|"http", "label", "url", ["headers"]}
+
+
+def send(
+    channel: Channel,
+    title: str,
+    body: str,
+    *,
+    actions: list[Action] | None = None,
+    timeout: float = 15.0,
+) -> None:
+    """Envoie une notification ; lève une exception si le canal la refuse.
+
+    ``actions`` : boutons de la notification (ntfy uniquement, 3 au plus) ; les autres
+    canaux les ignorent.
+    """
     kind = channel["type"]
     if kind == "ntfy":
-        _send_ntfy(channel, title, body, timeout)
+        _send_ntfy(channel, title, body, timeout, actions or [])
     elif kind == "discord":
         _send_discord(channel, title, body, timeout)
     elif kind == "email":
@@ -72,7 +88,23 @@ def send(channel: Channel, title: str, body: str, *, timeout: float = 15.0) -> N
         raise ValueError(f"type de canal inconnu : {kind}")
 
 
-def _send_ntfy(channel: Channel, title: str, body: str, timeout: float) -> None:
+def ntfy_actions(actions: list[Action]) -> str:
+    """En-tête ``Actions`` de ntfy (format court, 3 boutons au plus)."""
+    parts = []
+    for action in actions[:3]:
+        if action["type"] == "view":
+            parts.append(f"view, {action['label']}, {action['url']}")
+        elif action["type"] == "http":
+            spec = f"http, {action['label']}, {action['url']}, method=POST, clear=true"
+            for name, value in action.get("headers", {}).items():
+                spec += f", headers.{name}={value}"
+            parts.append(spec)
+    return "; ".join(parts)
+
+
+def _send_ntfy(
+    channel: Channel, title: str, body: str, timeout: float, actions: list[Action]
+) -> None:
     url = f"{channel['server'].rstrip('/')}/{channel['topic']}"
     headers = {
         # En-têtes HTTP : ntfy décode le RFC 2047 pour les caractères non ASCII.
@@ -82,6 +114,8 @@ def _send_ntfy(channel: Channel, title: str, body: str, timeout: float) -> None:
     }
     if channel.get("token"):
         headers["Authorization"] = f"Bearer {channel['token']}"
+    if actions:
+        headers["Actions"] = ntfy_actions(actions)
     _check(httpx.post(url, content=body.encode(), headers=headers, timeout=timeout))
 
 

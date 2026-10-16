@@ -1437,8 +1437,50 @@ def _fetch(client: MyGES, state: dict[str, Any], now: datetime, full: bool) -> d
         sections["agenda"] = watch_mod.agenda_section(
             client.agenda(now, now + watch_mod.AGENDA_HORIZON), now
         )
+        sections["events"] = watch_mod.events_section(client.events(), now)
         checked["slow"] = _ms(now)
     return sections
+
+
+HISTORY_DAYS = 14
+
+
+def _remember_history(
+    state: dict[str, Any], changes: list[watch_mod.Change], now: datetime
+) -> None:
+    """Garde 14 jours de nouveautés : c'est la matière du récapitulatif."""
+    limit = _ms(now - timedelta(days=HISTORY_DAYS))
+    history = [h for h in state.get("history", []) if h["at"] >= limit]
+    history += [{"at": _ms(now), "kind": c.kind, "text": c.text} for c in changes]
+    state["history"] = history[-500:]
+
+
+def _remind_before() -> timedelta | None:
+    minutes = (_load_config().get("remind") or {}).get("before_minutes")
+    return timedelta(minutes=int(minutes)) if minutes else None
+
+
+def _event_actions(changes: list[watch_mod.Change]) -> list[notify.Action]:
+    """Boutons ntfy pour les nouveaux événements : s'inscrire (si `myges serve` tourne)
+    ou voir la page myGES."""
+    serve = _load_config().get("serve") or {}
+    events = [c.event_id for c in changes if c.kind == "event_new" and c.event_id][:3]
+    actions: list[notify.Action] = []
+    for event_id in events:
+        label = "S'inscrire" if len(events) == 1 else f"S'inscrire ({event_id})"
+        if serve.get("url") and serve.get("token"):
+            actions.append({
+                "type": "http", "label": label,
+                "url": f"{serve['url'].rstrip('/')}/events/{event_id}/subscribe",
+                "headers": {"Authorization": f"Bearer {serve['token']}"},
+            })  # fmt: skip
+        else:
+            actions.append({"type": "view", "label": f"Voir ({event_id})",
+                            "url": f"https://myges.fr/common/event/{event_id}"})  # fmt: skip
+    if len(events) == 1 and serve.get("url"):
+        actions.append({"type": "view", "label": "Voir sur myGES",
+                        "url": f"https://myges.fr/common/event/{events[0]}"})  # fmt: skip
+    return actions
 
 
 @contextlib.contextmanager
@@ -1462,17 +1504,18 @@ def _exclusive(path: Path) -> Iterator[bool]:
 def _deliver(state: dict[str, Any], changes: list[watch_mod.Change]) -> int:
     """Envoie à chaque canal ses nouveautés + celles restées en souffrance ; renvoie le
     nombre de canaux en échec (leurs nouveautés sont gardées pour le passage suivant)."""
-    outbox: dict[str, list[dict[str, str]]] = state.setdefault("outbox", {})
-    fresh = [{"kind": c.kind, "text": c.text} for c in changes]
+    outbox: dict[str, list[dict[str, Any]]] = state.setdefault("outbox", {})
+    fresh = [{"kind": c.kind, "text": c.text, "event_id": c.event_id} for c in changes]
     failures = 0
     for channel in _channels():
         key = notify.describe(channel)
         queued = (outbox.get(key, []) + fresh)[-OUTBOX_LIMIT:]
         if not queued:
             continue
-        title, body = notify.format_changes([watch_mod.Change(**c) for c in queued])
+        pending = [watch_mod.Change(c["kind"], c["text"], c.get("event_id")) for c in queued]
+        title, body = notify.format_changes(pending)
         try:
-            notify.send(channel, title, body)
+            notify.send(channel, title, body, actions=_event_actions(pending))
         except Exception as exc:  # un canal en panne ne doit pas bloquer les autres
             failures += 1
             outbox[key] = queued
@@ -1577,9 +1620,23 @@ def _watch_pass(username: str, path: Path, *, quiet: bool, no_notify: bool) -> N
         or now - datetime.fromtimestamp(slow_at / 1000, timezone.utc) >= SLOW_EVERY
     )
 
+    reminders: list[tuple[str, watch_mod.Change]] = []
     try:
         with MyGES(username, _current_password()) as client:
             sections = _fetch(client, state, now, full)
+            before = _remind_before()
+            if before is not None and previous is not None:
+                reminded = state.get("reminded", {})
+                agenda = sections.get("agenda") or previous.get("agenda", {})
+                reminders = watch_mod.due_reminders(agenda, now, before, reminded, _TZ)
+                if reminders and "agenda" not in sections:
+                    # Rappel imminent : agenda relu pour donner la salle à jour.
+                    sections["agenda"] = watch_mod.agenda_section(
+                        client.agenda(now, now + watch_mod.AGENDA_HORIZON), now
+                    )
+                    reminders = watch_mod.due_reminders(
+                        sections["agenda"], now, before, reminded, _TZ
+                    )
     except TokenExpiredError:
         # Une seule alerte par expiration, pas une à chaque passage.
         if previous is not None and not state.get("expired_notified"):
@@ -1626,6 +1683,19 @@ def _watch_pass(username: str, path: Path, *, quiet: bool, no_notify: bool) -> N
     )
     changes = watch_mod.diff(previous, current, _TZ)
     state["snapshot"] = current
+    _remember_history(state, changes, now)
+    if reminders:
+        if not no_notify:
+            _broadcast(
+                "myGES : rappel de cours" if len(reminders) == 1 else "myGES : rappels de cours",
+                "\n".join(f"⏰ {change.text}" for _, change in reminders),
+            )
+        for _, change in reminders:
+            console.print(f"⏰ {change.text}")
+        limit = _ms(now - timedelta(days=1))
+        state["reminded"] = {
+            rid: start for rid, start in state.get("reminded", {}).items() if start >= limit
+        } | {rid: current["agenda"][rid]["start"] for rid, _ in reminders}
     failed = 0 if no_notify else _deliver(state, changes)
     _write_state(path, state)  # état enregistré avant toute relance, quoi qu'il arrive
     resumed = _resume_interrupted_registrations(now)
@@ -1941,6 +2011,237 @@ def gcal_sync(
         console.print(f"[red]−[/] {line}")
     if not quiet or report.created_or_updated or report.deleted:
         console.print(report.summary + (" [dim](simulation)[/]" if dry_run else ""))
+
+
+# ---------------------------------------------------------------- Rappels, récapitulatif
+
+
+def _parse_duration(text: str) -> timedelta:
+    """« 15m », « 15 », « 1h », « 1h30 », « 90min » → durée."""
+    match = re.fullmatch(r"\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*(?:m|min)?)?\s*", text.lower())
+    if match is None or not any(match.groups()):
+        raise typer.BadParameter(f"durée invalide : « {text} » (ex. 15m, 1h, 1h30)")
+    minutes = int(match.group(1) or 0) * 60 + int(match.group(2) or 0)
+    if not 1 <= minutes <= 24 * 60:
+        raise typer.BadParameter("entre 1 minute et 24 heures")
+    return timedelta(minutes=minutes)
+
+
+def _fmt_duration(delta: timedelta) -> str:
+    minutes = int(delta.total_seconds() // 60)
+    hours, minutes = divmod(minutes, 60)
+    return (
+        f"{hours} h {minutes:02d}"
+        if hours and minutes
+        else f"{hours} h"
+        if hours
+        else f"{minutes} min"
+    )
+
+
+@app.command()
+def remind(
+    before: Annotated[
+        str | None,
+        typer.Option("--before", "-b", help="Délai avant le cours : 5m, 15m, 1h, 1h30…"),
+    ] = None,
+    off: Annotated[bool, typer.Option("--off", help="Désactiver les rappels.")] = False,
+) -> None:
+    """Rappel avant chaque cours (salle, intervenant), envoyé par `myges watch`.
+
+    Sans option : affiche le réglage actuel. Le rappel part au passage de `myges watch`
+    qui suit l'échéance (toutes les 5 min avec `myges watch --install`).
+    """
+    config = _load_config()
+    if off:
+        config.pop("remind", None)
+        _store_config(config)
+        console.print("Rappels de cours désactivés.")
+        return
+    if before is None:
+        current = _remind_before()
+        console.print(
+            f"Rappels : {_fmt_duration(current)} avant chaque cours." if current
+            else "Rappels désactivés. Exemple : `myges remind --before 15m`."
+        )  # fmt: skip
+        return
+    delay = _parse_duration(before)
+    config["remind"] = {"before_minutes": int(delay.total_seconds() // 60)}
+    _store_config(config)
+    console.print(f"[green]Rappels activés[/] : {_fmt_duration(delay)} avant chaque cours.")
+    if not schedule.installed():
+        console.print("[dim]Ils sont envoyés par `myges watch` : `myges watch --install`.[/]")
+
+
+def _short_location(event: AgendaEvent) -> str:
+    """Une salle, ou « première salle +N salles » pour les événements multi-salles."""
+    rooms = event.rooms or []
+    if len(rooms) <= 2:
+        return event.location
+    first = rooms[0]
+    shown = f"{first.name} ({first.campus})" if first.campus else first.name or ""
+    return f"{shown} +{len(rooms) - 1} salles"
+
+
+def _summary_text(client: MyGES, username: str, days: int) -> tuple[str, str]:
+    now = datetime.now(_TZ)
+    end = now + timedelta(days=days)
+    lines: list[str] = []
+    catalog = _Courses(client, None)
+
+    classes = sorted(client.agenda(now, end), key=lambda e: e.start_date)
+    lines.append(f"📅 {len(classes)} cours d'ici le {_fmt_dt(end, '%d/%m')}")
+    current_day = None
+    for event in classes:
+        day = _fmt_day(event.start_date)
+        if day != current_day:
+            lines.append(f"  {day}")
+            current_day = day
+        number = catalog.number(_rc_id(event))
+        room = f" · {_short_location(event)}" if event.location else ""
+        lines.append(
+            f"    {_fmt_dt(event.start_date, '%H:%M')} {event.name.strip()}"
+            + (f" (#{number})" if number else "")
+            + room
+        )
+
+    steps = [
+        s for s in client.next_project_steps()
+        if s.psp_limit_date and now <= s.psp_limit_date <= now + timedelta(days=14)
+    ]  # fmt: skip
+    if steps:
+        lines.append("📌 Échéances (14 jours)")
+        lines += [
+            f"  {_fmt_dt(s.psp_limit_date, '%d/%m %H:%M')} {s.pro_name} : {s.psp_type}"
+            for s in sorted(steps, key=lambda s: s.psp_limit_date or now)
+        ]
+
+    events = [
+        e for e in client.events()
+        if e.is_participant_subscribed and e.event_date and now <= e.event_date <= end
+    ]  # fmt: skip
+    if events:
+        lines.append("🎟️ Événements où tu es inscrit")
+        lines += [f"  {_fmt_dt(e.event_date)} {e.event_title}" for e in events]
+
+    state = _load_state(_state_path(username)) or {}
+    since = _ms(now - timedelta(days=7))
+    recent = [h for h in state.get("history", []) if h["at"] >= since
+              and h["kind"] in ("grade", "file", "absence")]  # fmt: skip
+    if recent:
+        lines.append("🆕 Cette semaine")
+        icons = {"grade": "📊", "file": "📄", "absence": "🚫"}
+        lines += [f"  {icons[h['kind']]} {h['text']}" for h in recent]
+    return f"myGES : ta semaine (jusqu'au {_fmt_dt(end, '%d/%m')})", "\n".join(lines)
+
+
+@app.command()
+def summary(
+    send: Annotated[bool, typer.Option("--send", help="Envoyer sur les canaux d'alerte.")] = False,
+    days: Annotated[int, typer.Option(help="Période couverte, en jours.")] = 7,
+    install: Annotated[
+        str | None,
+        typer.Option(
+            "--install",
+            metavar="« JOUR HH:MM »",
+            help='Envoi automatique chaque semaine, ex. --install "lundi 07:00".',
+        ),
+    ] = None,
+    uninstall: Annotated[
+        bool, typer.Option("--uninstall", help="Arrêter l'envoi automatique.")
+    ] = False,
+    quiet: Annotated[bool, typer.Option("--quiet", "-q", hidden=True)] = False,
+) -> None:
+    """Récapitulatif : cours à venir, échéances, événements, nouveautés de la semaine."""
+    if uninstall:
+        try:
+            removed = schedule.uninstall_weekly_summary()
+        except schedule.ScheduleError as exc:
+            err.print(f"[red]Échec :[/] {exc}")
+            raise typer.Exit(1) from exc
+        console.print("Récapitulatif automatique arrêté." if removed else "[dim]Rien à arrêter.[/]")
+        return
+    if install is not None:
+        try:
+            when = schedule.install_weekly_summary(install)
+        except schedule.ScheduleError as exc:
+            err.print(f"[red]Échec :[/] {exc}")
+            raise typer.Exit(1) from exc
+        console.print(f"[green]Récapitulatif envoyé {when}[/] sur vos canaux d'alerte.")
+        if not _channels():
+            console.print("[yellow]![/] Aucun canal : `myges notify add ntfy` (ou discord, email).")
+        console.print("[dim]Arrêter : `myges summary --uninstall`.[/]")
+        return
+    username = _current_username() or ""
+    with _client() as client:
+        title, body = _summary_text(client, username, days)
+    if not quiet:
+        console.print(f"[bold]{title}[/]\n{body}", highlight=False)
+    if send and _broadcast(title, body):
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------- Boutons de notification
+
+
+@app.command()
+def serve(
+    listen: Annotated[
+        str,
+        typer.Option(
+            help="Adresse:port d'écoute, privée (tailnet, réseau local), ex. 100.x.x.x:2587."
+        ),
+    ],
+    public_url: Annotated[
+        str | None,
+        typer.Option(help="Adresse vue par le téléphone, si différente de --listen."),
+    ] = None,
+) -> None:
+    """Recevoir les boutons « S'inscrire » des notifications ntfy (à laisser tourner).
+
+    Enregistre l'adresse et un jeton dans la config : les alertes « nouvel événement »
+    portent alors un bouton qui lance la pré-inscription sur cette machine. N'écouter que
+    sur une adresse privée.
+    """
+    import logging
+    import secrets
+
+    from .serve import make_server
+
+    host, _, port = listen.rpartition(":")
+    if not host or not port.isdigit():
+        raise typer.BadParameter("format attendu : adresse:port, ex. 100.64.0.1:2587")
+    if host in ("0.0.0.0", "::", ""):
+        err.print("[yellow]![/] Écoute sur toutes les interfaces : préférer une adresse privée.")
+    config = _load_config()
+    settings = config.get("serve") or {}
+    settings["url"] = public_url or f"http://{listen}"
+    settings.setdefault("token", secrets.token_urlsafe(24))
+    config["serve"] = settings
+    _store_config(config)
+
+    def on_subscribe(event_id: int) -> str:
+        with _client() as client:
+            event = next((e for e in client.events() if e.event_id == event_id), None)
+        if event is None:
+            raise LookupError(f"événement {event_id} introuvable sur myGES")
+        if event.is_participant_subscribed:
+            return f"déjà inscrit à {event.event_title}"
+        try:
+            _subscribe_in_background([event_id])
+        except typer.Exit as exc:
+            raise RuntimeError("échec du lancement, voir events-background.log") from exc
+        return f"pré-inscription lancée : {event.event_title}"
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    server = make_server(host, int(port), settings["token"], on_subscribe)
+    console.print(f"Boutons « S'inscrire » actifs : {settings['url']} (Ctrl+C pour arrêter)")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
 
 
 # ---------------------------------------------------------------- Exploration

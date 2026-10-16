@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .models import Absence, AgendaEvent, CourseFile, Grade
+from .models import Absence, AgendaEvent, CampusEvent, CourseFile, Grade
 
 Snapshot = dict[str, Any]
 
@@ -23,8 +23,10 @@ AGENDA_HORIZON = timedelta(days=14)
 
 @dataclass(frozen=True)
 class Change:
-    kind: str  # grade | absence | file | agenda_added | agenda_removed | agenda_moved
+    # grade | absence | file | agenda_added | agenda_removed | agenda_moved | event_new | reminder
+    kind: str
     text: str
+    event_id: int | None = None  # événement concerné : boutons « S'inscrire » / « Voir »
 
 
 def _num(value: float | None) -> str:
@@ -75,6 +77,19 @@ def agenda_section(agenda: Sequence[AgendaEvent], now: datetime) -> dict[str, An
         }
         for e in agenda
         if now <= e.start_date <= horizon
+    }
+
+
+def events_section(events: Sequence[CampusEvent], now: datetime) -> dict[str, Any]:
+    """Événements à venir, avec leurs dates d'inscription."""
+    return {
+        str(e.event_id): {
+            "title": e.event_title,
+            "date": _ms(e.event_date) if e.event_date else None,
+            "opens": _ms(e.start_subscription_date) if e.start_subscription_date else None,
+        }
+        for e in events
+        if e.event_date is None or e.event_date >= now
     }
 
 
@@ -139,7 +154,46 @@ def diff(old: Snapshot, new: Snapshot, tz: Any = timezone.utc) -> list[Change]:
     changes += _absence_changes(old.get("absences", []), new.get("absences", []), tz)
     changes += _file_changes(old.get("files", {}), new.get("files", {}))
     changes += _agenda_changes(old, new, tz)
+    changes += _event_changes(old, new, tz)
     return changes
+
+
+def _event_changes(old: Snapshot, new: Snapshot, tz: Any) -> Iterable[Change]:
+    if "events" not in old:  # section absente avant (première fois) : rien n'est « nouveau »
+        return
+    known = old["events"]
+    for event_id, event in new.get("events", {}).items():
+        if event_id in known:
+            continue
+        details = []
+        if event["date"]:
+            details.append(f"le {_when(event['date'], tz)}")
+        if event["opens"] and event["opens"] > new.get("taken_at", 0):
+            details.append(f"inscriptions le {_when(event['opens'], tz)}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        yield Change("event_new", f"Nouvel événement : {event['title']}{suffix}", int(event_id))
+
+
+def due_reminders(
+    agenda: Mapping[str, Any], now: datetime, before: timedelta, already: Iterable[str], tz: Any
+) -> list[tuple[str, Change]]:
+    """Rappels à envoyer : cours qui commencent dans moins de ``before``, pas encore rappelés.
+
+    Renvoie des couples (reservation_id, rappel).
+    """
+    done = set(already)
+    due = []
+    for rid, event in sorted(agenda.items(), key=lambda kv: kv[1]["start"]):
+        start = datetime.fromtimestamp(event["start"] / 1000, timezone.utc)
+        if rid in done or not now < start <= now + before:
+            continue
+        minutes = max(1, round((start - now).total_seconds() / 60))
+        delay = f"{minutes} min" if minutes < 60 else f"{minutes // 60} h {minutes % 60:02d}"
+        end = datetime.fromtimestamp(event["end"] / 1000, timezone.utc).astimezone(tz)
+        where = f" · {event['room']}" if event["room"] else ""
+        text = f"Dans {delay} : {event['name']}{where} · {start.astimezone(tz):%H:%M}–{end:%H:%M}"
+        due.append((rid, Change("reminder", text)))
+    return due
 
 
 def _grade_changes(old: dict[str, Any], new: dict[str, Any]) -> Iterable[Change]:

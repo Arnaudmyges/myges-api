@@ -108,7 +108,8 @@ myges profile
 
 ## Alertes et Google Calendar
 
-- [Alertes](alertes.md) : `myges watch`, `myges notify …`
+- [Alertes](alertes.md) : `myges watch`, `myges notify …`, rappels (`myges remind`),
+  récapitulatif (`myges summary`), bouton « S'inscrire » (`myges serve`)
 - [Google Calendar](google-calendar.md) : `myges gcal …`
 
 ## Exploration de l'API

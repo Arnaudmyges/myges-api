@@ -51,6 +51,41 @@ Arrêter : `myges watch --uninstall`.
 Sans `--save-password`, les alertes s'arrêtent à l'expiration de la session (~6 jours) : une
 seule alerte vous demande alors de relancer `myges login`.
 
+## Rappel avant chaque cours
+
+```bash
+myges remind --before 15m        # ou 5m, 1h, 1h30… ; `myges remind --off` pour arrêter
+```
+
+Envoyé par `myges watch` : cours, salle (relue juste avant, donc à jour) et horaire. Le
+rappel part au passage qui suit l'échéance, soit à 5 minutes près.
+
+## Récapitulatif de la semaine
+
+```bash
+myges summary                         # l'afficher
+myges summary --install "lundi 07:00" # l'envoyer chaque semaine (ou "dimanche 20h"…)
+myges summary --uninstall
+```
+
+Cours des 7 prochains jours, échéances de projet sur 14 jours, événements où vous êtes
+inscrit, nouvelles notes et nouveaux supports de la semaine.
+
+## Nouveaux événements et bouton « S'inscrire »
+
+`myges watch` signale chaque nouvel événement publié sur myGES, avec sa date et l'ouverture
+des inscriptions. Sur ntfy, la notification porte un bouton **Voir sur myGES**, et, si
+`myges serve` tourne sur la même machine que `myges watch`, un bouton **S'inscrire** qui
+lance la pré-inscription (inscription dès l'ouverture).
+
+```bash
+myges serve --listen 100.x.x.x:2587   # adresse privée (tailnet, réseau local) uniquement
+```
+
+Le téléphone doit pouvoir joindre cette adresse (Tailscale actif). Chaque bouton porte un
+jeton : seuls ceux qui lisent vos notifications peuvent s'en servir, et le serveur ne sait
+faire qu'une chose, lancer une pré-inscription.
+
 ## Si un envoi échoue
 
 - Un canal indisponible (quota ntfy, Discord en panne…) ne fait rien perdre : les nouveautés

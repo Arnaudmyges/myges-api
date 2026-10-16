@@ -32,19 +32,71 @@ def cron_line(executable: str, every: int) -> str:
     return f"*/{every} * * * * {quoted} watch --quiet {MARKER}"
 
 
-def with_entry(crontab: str, line: str) -> str:
+SUMMARY_MARKER = "# myges-api: summary"
+SUMMARY_TASK = "myges-summary"
+DAYS = {  # jour cron (0 = dimanche) et code schtasks
+    "lundi": (1, "MON"), "mardi": (2, "TUE"), "mercredi": (3, "WED"), "jeudi": (4, "THU"),
+    "vendredi": (5, "FRI"), "samedi": (6, "SAT"), "dimanche": (0, "SUN"),
+}  # fmt: skip
+
+
+def with_entry(crontab: str, line: str, marker: str = MARKER) -> str:
     """Crontab avec notre ligne (remplace l'éventuelle précédente)."""
-    base = without_entry(crontab).rstrip("\n")
+    base = without_entry(crontab, marker).rstrip("\n")
     return f"{base}\n{line}\n" if base else f"{line}\n"
 
 
-def without_entry(crontab: str) -> str:
-    kept = [entry for entry in crontab.splitlines() if MARKER not in entry]
+def without_entry(crontab: str, marker: str = MARKER) -> str:
+    kept = [entry for entry in crontab.splitlines() if marker not in entry]
     return "\n".join(kept) + ("\n" if kept else "")
 
 
-def find_entry(crontab: str) -> str | None:
-    return next((entry for entry in crontab.splitlines() if MARKER in entry), None)
+def find_entry(crontab: str, marker: str = MARKER) -> str | None:
+    return next((entry for entry in crontab.splitlines() if marker in entry), None)
+
+
+def parse_weekly(spec: str) -> tuple[str, int, int]:
+    """« lundi 07:00 », « dim 20h », « vendredi 18h30 » → (jour, heure, minute)."""
+    import re
+
+    match = re.fullmatch(r"\s*([a-zA-Zéû]+)\s+(\d{1,2})\s*(?:[:h]\s*(\d{2})?)?\s*", spec)
+    if match is None:
+        raise ScheduleError(f'Moment invalide : « {spec} ». Exemple : "lundi 07:00".')
+    word, hour, minute = match.group(1).lower(), int(match.group(2)), int(match.group(3) or 0)
+    day = next((d for d in DAYS if d.startswith(word) and len(word) >= 3), None)
+    if day is None or hour > 23 or minute > 59:
+        raise ScheduleError(f'Moment invalide : « {spec} ». Exemple : "lundi 07:00".')
+    return day, hour, minute
+
+
+def install_weekly_summary(spec: str) -> str:
+    """Planifie `myges summary --send` chaque semaine ; renvoie une description."""
+    day, hour, minute = parse_weekly(spec)
+    exe = executable()
+    shown = f"chaque {day} à {hour:02d}:{minute:02d}"
+    if is_windows():
+        result = _run(
+            ["schtasks", "/Create", "/F", "/SC", "WEEKLY", "/D", DAYS[day][1],
+             "/ST", f"{hour:02d}:{minute:02d}", "/TN", SUMMARY_TASK,
+             "/TR", f'"{exe}" summary --send --quiet']
+        )  # fmt: skip
+        if result.returncode != 0:
+            raise ScheduleError(f"schtasks a échoué : {result.stderr.strip() or result.stdout}")
+        return shown
+    quoted = f'"{exe}"' if " " in exe else exe
+    line = f"{minute} {hour} * * {DAYS[day][0]} {quoted} summary --send --quiet {SUMMARY_MARKER}"
+    write_crontab(with_entry(read_crontab(), line, SUMMARY_MARKER))
+    return shown
+
+
+def uninstall_weekly_summary() -> bool:
+    if is_windows():
+        return _run(["schtasks", "/Delete", "/F", "/TN", SUMMARY_TASK]).returncode == 0
+    current = read_crontab()
+    if find_entry(current, SUMMARY_MARKER) is None:
+        return False
+    write_crontab(without_entry(current, SUMMARY_MARKER))
+    return True
 
 
 # ---------------------------------------------------------------- Système

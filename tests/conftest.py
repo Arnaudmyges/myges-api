@@ -104,3 +104,4 @@ def mock_api(router: respx.MockRouter, grades: dict[str, Any]) -> None:
     get("/me/2026/absences", httpx.Response(204))
     get("/me/500001/files", httpx.Response(200, json=fixture("getCourseFiles")))
     get("/me/agenda", httpx.Response(200, json=fixture("getAgenda")))
+    get("/me/events", httpx.Response(200, json=fixture("getEvents")))
