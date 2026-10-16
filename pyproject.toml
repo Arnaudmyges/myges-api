@@ -50,6 +50,8 @@ dev = [
     "types-PyYAML",
     "ruff>=0.6",
     "mypy>=1.10",
+    "build>=1.2",
+    "twine>=5",
 ]
 
 [tool.hatch.version]

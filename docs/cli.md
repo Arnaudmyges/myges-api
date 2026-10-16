@@ -77,6 +77,7 @@ s'inscrit à la seconde près.
 
 ```bash
 myges events                        # événements à venir : id, ouverture, inscrit / pré-inscrit
+myges events --subscribed           # seulement ceux où je suis inscrit (--not-subscribed : l'inverse)
 myges events subscribe 4525 4529    # s'inscrit à l'ouverture, en arrière-plan
 myges events --inspect 4525         # description, intervenants, salle
 myges events pending                # pré-inscriptions en attente

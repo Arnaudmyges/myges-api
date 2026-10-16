@@ -8,6 +8,7 @@ uv sync --group dev        # ou : python3 -m venv .venv && .venv/bin/pip install
 make check                 # ruff + mypy --strict + pytest
 make live                  # contrat contre la vraie API (MYGES_USERNAME / MYGES_PASSWORD)
 make docs                  # Swagger UI + Redoc sur http://localhost:8000/docs/
+make release VERSION=0.4.0 # contrôles, tag, publication PyPI (PYPI_TOKEN dans .env), push
 ```
 
 Les particularités de l'API sont consignées dans [docs/api-notes.md](docs/api-notes.md) :

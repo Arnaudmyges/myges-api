@@ -65,6 +65,28 @@ def _root(
     ] = False,
 ) -> None:
     """Client en ligne de commande pour l'API myGES / Kordis (non officielle)."""
+    _hint_new_version()
+
+
+def _hint_new_version() -> None:
+    """Rappel discret quand une version plus récente est publiée (pipx ne prévient pas)."""
+    if (
+        os.environ.get("MYGES_NO_UPDATE_CHECK")
+        or os.environ.get("MYGES_BACKGROUND")
+        or os.environ.get("_MYGES_COMPLETE")  # complétion Tab en cours
+        or "--json" in sys.argv
+        or not sys.stderr.isatty()  # tâche planifiée, script, sortie redirigée
+    ):
+        return
+    from .updates import newer_version
+
+    latest = newer_version(__version__)
+    if latest:
+        err.print(
+            f"[dim]Nouvelle version {latest} disponible (vous avez {__version__}) : "
+            "pipx upgrade myges-api[/]",
+            highlight=False,
+        )
 
 
 T = TypeVar("T")
@@ -813,22 +835,43 @@ def events(
             help="Détail d'un événement : description, intervenants, salle.",
         ),
     ] = None,
+    subscribed: Annotated[
+        bool, typer.Option("--subscribed", help="Seulement ceux où vous êtes inscrit.")
+    ] = False,
+    not_subscribed: Annotated[
+        bool,
+        typer.Option(
+            "--not-subscribed", help="Seulement ceux où vous n'êtes pas (encore) inscrit."
+        ),
+    ] = False,
     json_: JsonOpt = False,
 ) -> None:
-    """Événements du campus, avec l'ouverture des inscriptions et vos pré-inscriptions."""
+    """Événements à venir, avec l'ouverture des inscriptions et vos pré-inscriptions."""
     if ctx.invoked_subcommand is not None:
         return
+    if subscribed and not_subscribed:
+        err.print("[red]--subscribed et --not-subscribed s'excluent.[/]")
+        raise typer.Exit(2)
     with _client() as client:
         data = client.events()
     if inspect is not None:
         return _inspect_event(data, _event_id(inspect), json_)
-    if json_:
-        return _dump(data)
+    if json_ and not (subscribed or not_subscribed):
+        return _dump(data)  # sans filtre : tous les événements, comme avant
     now = datetime.now(_TZ)
-    waiting = {p.event_id: p for p in pending_mod.load()}
     upcoming = [e for e in data if e.event_date is None or e.event_date >= now]
+    if subscribed or not_subscribed:
+        upcoming = [e for e in upcoming if bool(e.is_participant_subscribed) == subscribed]
+    if json_:
+        return _dump(upcoming)
+    waiting = {p.event_id: p for p in pending_mod.load()}
+    title = (
+        "Événements où vous êtes inscrit" if subscribed
+        else "Événements où vous n'êtes pas inscrit" if not_subscribed
+        else "Événements à venir"
+    )  # fmt: skip
     _table(
-        "Événements à venir",
+        title,
         sorted(upcoming, key=lambda e: e.event_date or now),
         [
             ("id", lambda e: e.event_id),

@@ -1,4 +1,4 @@
-.PHONY: check test live lint docs
+.PHONY: check test live lint docs release
 
 check: lint test
 
@@ -17,3 +17,7 @@ live:
 # Swagger UI + Redoc sur http://localhost:8000/docs/ (même arborescence que GitHub Pages)
 docs:
 	python -m http.server 8000
+
+# Nouvelle version sur PyPI : make release VERSION=0.4.0
+release:
+	scripts/release.sh $(VERSION)

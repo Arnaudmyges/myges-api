@@ -51,6 +51,7 @@ class FakeSystem:
 def no_shell_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     """La complétion n'est jamais installée dans le vrai shell de la machine de test."""
     monkeypatch.setattr("myges.cli._install_completion", lambda: True)
+    monkeypatch.setenv("MYGES_NO_UPDATE_CHECK", "1")  # pas d'appel à PyPI pendant les tests
 
 
 @pytest.fixture(autouse=True)

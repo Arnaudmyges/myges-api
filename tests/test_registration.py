@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -442,3 +443,34 @@ def test_event_description_html_to_text() -> None:
         "L’IA agentique\nIntervenants :\nSimon Eterno - leader\nJulianne Cerdan\n\n"
         "Nation 1 Salle A07"
     )
+
+
+def test_events_subscription_filters(state: Path) -> None:
+    payload = fixture("getEvents")
+    future = int((datetime.now(timezone.utc) + timedelta(days=5)).timestamp() * 1000)
+    other = copy.deepcopy(payload["result"][0])
+    payload["result"][0].update(
+        event_date=future,
+        is_participant_subscribed=True,
+        event_title="Conférence où je suis inscrit",
+    )
+    other.update(
+        event_id=4502,
+        event_date=future,
+        is_participant_subscribed=False,
+        event_title="Atelier où je ne suis pas inscrit",
+    )
+    payload["result"].append(other)
+    runner = CliRunner()
+    with respx.mock() as router:
+        router.get(f"{API_URL}/me/events").mock(return_value=httpx.Response(200, json=payload))
+        mine = runner.invoke(app, ["events", "--subscribed"], env={"COLUMNS": "200"})
+        others = runner.invoke(app, ["events", "--not-subscribed"], env={"COLUMNS": "200"})
+        both = runner.invoke(app, ["events", "--subscribed", "--not-subscribed"])
+        as_json = runner.invoke(app, ["events", "--subscribed", "--json"])
+    assert "Conférence où je suis inscrit" in mine.output
+    assert "Atelier" not in mine.output
+    assert "Atelier où je ne suis pas inscrit" in others.output
+    assert "Conférence" not in others.output
+    assert both.exit_code == 2
+    assert [e["event_id"] for e in json.loads(as_json.output)] == [4501]
