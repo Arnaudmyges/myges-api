@@ -32,16 +32,19 @@ py -m pipx ensurepath
 Dans un **nouveau terminal** :
 
 ```bash
-pipx install "myges-api[cli] @ https://github.com/Arnaudmyges/myges-api/archive/refs/heads/main.zip"
+pipx install "myges-api[cli]"
 myges login
 ```
 
 ## Mise à jour
 
 ```bash
-pipx reinstall myges-api
+pipx upgrade myges-api
 myges --version
 ```
+
+Installé avant la publication sur PyPI (depuis l'adresse GitHub) ? Une seule fois :
+`pipx install --force "myges-api[cli]"`, puis `pipx upgrade` suffit.
 
 ## Complétion avec Tab
 

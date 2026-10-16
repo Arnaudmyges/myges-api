@@ -4,6 +4,7 @@
   <a href="https://arnaudmyges.github.io/myges-api/docs/"><img alt="Swagger UI" src="https://img.shields.io/badge/Swagger_UI-docs-85EA2D?logo=swagger&logoColor=black&style=for-the-badge"></a>
   <a href="https://arnaudmyges.github.io/myges-api/docs/redoc.html"><img alt="Redoc" src="https://img.shields.io/badge/Redoc-r%C3%A9f%C3%A9rence-E53935?logo=readthedocs&logoColor=white&style=for-the-badge"></a>
   <a href="https://github.com/Arnaudmyges/myges-api/blob/main/openapi/myges.yaml"><img alt="OpenAPI 3.1" src="https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white&style=for-the-badge"></a>
+  <a href="https://pypi.org/project/myges-api/"><img alt="PyPI" src="https://img.shields.io/pypi/v/myges-api?style=for-the-badge&logo=pypi&logoColor=white"></a>
   <a href="https://arnaudmyges.github.io/myges-api/docs/"><img alt="33 endpoints" src="https://img.shields.io/badge/endpoints-33-blue?style=for-the-badge"></a>
 </p>
 
@@ -23,7 +24,7 @@ qui utilisent myGES. Avec la documentation Swagger complète de l'API myGES.
 
 ```bash
 sudo apt install pipx && pipx ensurepath     # puis ouvrir un nouveau terminal
-pipx install "myges-api[cli] @ https://github.com/Arnaudmyges/myges-api/archive/refs/heads/main.zip"
+pipx install "myges-api[cli]"
 myges login
 ```
 

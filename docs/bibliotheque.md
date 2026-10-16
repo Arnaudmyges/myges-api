@@ -1,7 +1,7 @@
 # Bibliothèque Python
 
 ```bash
-pip install "myges-api @ https://github.com/Arnaudmyges/myges-api/archive/refs/heads/main.zip"
+pip install myges-api
 ```
 
 Dépendances : `httpx` et `pydantic` uniquement (la CLI est dans l'extra `[cli]`).
