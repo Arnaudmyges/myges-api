@@ -51,13 +51,18 @@ Puis, **dans un nouveau terminal**, sur tous les systèmes :
 pipx install "myges-api[cli] @ https://github.com/Arnaudmyges/myges-api/archive/refs/heads/main.zip"
 ```
 
-Mise à jour : relancer la même commande avec `--force`.
+Mise à jour : `pipx reinstall myges-api` (version installée : `myges --version`).
+
+Complétion des commandes avec Tab (bash, zsh, fish, PowerShell) : `myges --install-completion`,
+puis ouvrir un nouveau terminal.
 
 ## CLI
 
 ```bash
 myges login                      # une seule fois : identifiant + mot de passe myGES
 
+myges next                       # prochain cours (ou celui en cours), salle, intervenant
+myges today                      # cours du jour
 myges agenda                     # 7 prochains jours
 myges agenda --from 2026-11-02 --to 2026-11-06 --ics semaine.ics
 myges grades                     # notes de l'année ; -y 2025 pour une autre

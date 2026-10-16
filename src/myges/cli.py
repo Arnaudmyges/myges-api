@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, TypeVar
+from zoneinfo import ZoneInfo
 
 try:
     import typer
@@ -28,9 +29,11 @@ except ImportError:  # pragma: no cover
 
 from pydantic import BaseModel
 
+from ._version import __version__
 from .client import MyGES
 from .errors import MyGESError
 from .ics import to_ics
+from .models import AgendaEvent
 
 app = typer.Typer(
     help="Client en ligne de commande pour l'API myGES / Kordis (non officielle).",
@@ -40,7 +43,30 @@ app = typer.Typer(
 console = Console()
 err = Console(stderr=True)
 
+
+def _show_version(value: bool) -> None:
+    if value:
+        console.print(f"myges-api {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version", callback=_show_version, is_eager=True, help="Afficher la version."
+        ),
+    ] = False,
+) -> None:
+    """Client en ligne de commande pour l'API myGES / Kordis (non officielle)."""
+
+
 T = TypeVar("T")
+
+# Heure affichée : celle des campus (France), pas celle de la machine, qui peut être un
+# serveur en UTC. Surchargeable avec MYGES_TZ (ex. « America/Montreal »).
+_TZ = ZoneInfo(os.environ.get("MYGES_TZ") or "Europe/Paris")
 
 JsonOpt = Annotated[bool, typer.Option("--json", help="Sortie JSON brute.")]
 YearOpt = Annotated[
@@ -112,7 +138,7 @@ def _dump(data: Any) -> None:
 
 
 def _fmt_dt(value: datetime | None, fmt: str = "%d/%m/%Y %H:%M") -> str:
-    return value.astimezone().strftime(fmt) if value else ""
+    return value.astimezone(_TZ).strftime(fmt) if value else ""
 
 
 def _table(
@@ -136,7 +162,7 @@ _JOURS = ("lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim.")
 
 def _fmt_day(value: datetime) -> str:
     """« ven. 16/10 », quelle que soit la locale du système."""
-    local = value.astimezone()
+    local = value.astimezone(_TZ)
     return f"{_JOURS[local.weekday()]} {local:%d/%m}"
 
 
@@ -302,21 +328,98 @@ def agenda(
         if json_:
             return _dump(events)
         catalog = _Courses(client, None)
+    _agenda_table(f"Agenda du {first:%d/%m} au {last - timedelta(days=1):%d/%m}", events, catalog)
+
+
+def _rc_id(event: AgendaEvent) -> int | None:
+    return event.discipline.rc_id if event.discipline else None
+
+
+def _agenda_table(title: str, events: Sequence[AgendaEvent], catalog: _Courses) -> None:
     _table(
-        f"Agenda du {first:%d/%m} au {last - timedelta(days=1):%d/%m}",
+        title,
         events,
         [
             ("Jour", lambda e: _fmt_day(e.start_date)),
-            (
-                "Horaire",
-                lambda e: f"{_fmt_dt(e.start_date, '%H:%M')}–{_fmt_dt(e.end_date, '%H:%M')}",
-            ),
-            ("#", lambda e: catalog.number(e.discipline.rc_id if e.discipline else None)),
+            ("Horaire", _fmt_slot),
+            ("#", lambda e: catalog.number(_rc_id(e))),
             ("Cours", lambda e: e.name),
             ("Salle", lambda e: e.location or e.modality),
             ("Intervenant", lambda e: e.teacher),
         ],
     )
+
+
+def _fmt_slot(event: AgendaEvent) -> str:
+    return f"{_fmt_dt(event.start_date, '%H:%M')}–{_fmt_dt(event.end_date, '%H:%M')}"
+
+
+def _fmt_delay(delta: timedelta) -> str:
+    minutes = int(delta.total_seconds() // 60)
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours} h {minutes:02d}" if minutes else f"{hours} h"
+    return f"{hours // 24} j"
+
+
+@app.command()
+def today(json_: JsonOpt = False) -> None:
+    """Cours d'aujourd'hui (et le prochain s'il n'y en a pas)."""
+    now = datetime.now(_TZ)
+    with _client() as client:
+        events = sorted(
+            client.agenda(now.date(), now.date() + timedelta(days=1)), key=lambda e: e.start_date
+        )
+        if json_:
+            return _dump(events)
+        catalog = _Courses(client, None)
+        if not events:
+            console.print("[dim]Pas de cours aujourd'hui.[/]")
+            upcoming = _next_event(client, now)
+            if upcoming is not None:
+                _print_next(upcoming, now, catalog)
+            return
+    _agenda_table(f"Aujourd'hui, {_fmt_day(now)}", events, catalog)
+
+
+def _next_event(client: MyGES, now: datetime, horizon_days: int = 30) -> AgendaEvent | None:
+    """Créneau en cours, sinon le prochain, dans les ``horizon_days`` jours."""
+    events = client.agenda(now - timedelta(hours=12), now + timedelta(days=horizon_days))
+    candidates = [e for e in events if e.end_date > now]
+    return min(candidates, key=lambda e: e.start_date, default=None)
+
+
+def _print_next(event: AgendaEvent, now: datetime, catalog: _Courses) -> None:
+    number = catalog.number(_rc_id(event))
+    label = f"{event.name}" + (f" [dim](#{number})[/]" if number else "")
+    if event.start_date <= now:
+        when = f"[green]En cours[/] jusqu'à {_fmt_dt(event.end_date, '%H:%M')}"
+    else:
+        when = (
+            f"[bold]Dans {_fmt_delay(event.start_date - now)}[/] · "
+            f"{_fmt_day(event.start_date)} {_fmt_slot(event)}"
+        )
+    console.print(f"{when}\n{label}")
+    details = " · ".join(x for x in (event.location or event.modality, event.teacher) if x)
+    if details:
+        console.print(f"[dim]{details}[/]")
+
+
+@app.command("next")
+def next_(json_: JsonOpt = False) -> None:
+    """Prochain cours (ou celui en cours)."""
+    now = datetime.now(_TZ)
+    with _client() as client:
+        event = _next_event(client, now)
+        if json_:
+            return _dump(event) if event else _dump(None)
+        if event is None:
+            console.print("[dim]Aucun cours dans les 30 prochains jours.[/]")
+            return
+        catalog = _Courses(client, None)
+    _print_next(event, now, catalog)
 
 
 # ---------------------------------------------------------------- Scolarité
@@ -630,7 +733,7 @@ def events(json_: JsonOpt = False) -> None:
         return _dump(data)
     _table(
         "Événements",
-        sorted(data, key=lambda e: e.event_date or datetime.min.astimezone()),
+        sorted(data, key=lambda e: e.event_date or datetime.min.replace(tzinfo=_TZ)),
         [
             ("Date", lambda e: _fmt_dt(e.event_date)),
             ("Événement", lambda e: e.event_title),

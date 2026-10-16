@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -218,3 +220,63 @@ def test_course_numbers_shown_in_listings() -> None:
         lines = [line for line in output.splitlines() if "Réseaux avancés" in line]
         assert lines
         assert "│ 2 " in lines[0] or lines[0].lstrip("│ ").startswith("2")
+
+
+# ---------------------------------------------------------------- today / next
+# Premier créneau de la fixture getAgenda : T1 - Réseaux avancés (#2), 3 h, salle B12.
+
+
+def _freeze(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Frozen:  # type: ignore[override]
+            return cls.fromtimestamp(now.timestamp(), tz=tz or timezone.utc)
+
+    monkeypatch.setattr("myges.cli.datetime", Frozen)
+
+
+def _first_slot() -> datetime:
+    return datetime.fromtimestamp(
+        fixture("getAgenda")["result"][0]["start_date"] / 1000, timezone.utc
+    )
+
+
+@pytest.mark.usefixtures("env")
+@pytest.mark.parametrize(
+    ("offset", "expected"),
+    [(timedelta(hours=-2), "Dans 2 h"), (timedelta(hours=1), "En cours")],
+)
+def test_cli_next(monkeypatch: pytest.MonkeyPatch, offset: timedelta, expected: str) -> None:
+    _freeze(monkeypatch, _first_slot() + offset)
+    with respx.mock(base_url=API_URL) as api:
+        mock_courses(api)
+        api.get("/me/agenda").mock(return_value=httpx.Response(200, json=fixture("getAgenda")))
+        result = CliRunner().invoke(app, ["next"])
+    assert result.exit_code == 0, result.output
+    assert expected in result.output
+    assert "Réseaux avancés" in result.output
+    assert "#2" in result.output
+
+
+@pytest.mark.usefixtures("env")
+def test_cli_today_without_classes_shows_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    _freeze(monkeypatch, _first_slot() - timedelta(days=2))
+    empty = {"response_code": 0, "version": "1", "result": [], "links": []}
+    with respx.mock(base_url=API_URL) as api:
+        mock_courses(api)
+        api.get("/me/agenda").mock(
+            side_effect=[
+                httpx.Response(200, json=empty),  # aujourd'hui
+                httpx.Response(200, json=fixture("getAgenda")),  # recherche du prochain
+            ]
+        )
+        result = CliRunner().invoke(app, ["today"])
+    assert result.exit_code == 0, result.output
+    assert "Pas de cours aujourd'hui" in result.output
+    assert "Dans 2 j" in result.output
+
+
+def test_cli_version() -> None:
+    result = CliRunner().invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert result.output.startswith("myges-api ")

@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "httpx>=0.27",
     "pydantic>=2.7",
+    "tzdata; sys_platform == 'win32'",  # base des fuseaux horaires, absente sous Windows
 ]
 
 [project.optional-dependencies]
