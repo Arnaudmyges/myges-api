@@ -1,0 +1,65 @@
+# Installation
+
+Nécessite Python ≥ 3.10. On installe d'abord [pipx](https://pipx.pypa.io) (une seule fois),
+qui rend la commande `myges` disponible partout.
+
+## 1. pipx
+
+**Linux (Debian / Ubuntu) et WSL**
+
+```bash
+sudo apt install pipx
+pipx ensurepath
+```
+
+**macOS**
+
+```bash
+brew install pipx
+pipx ensurepath
+```
+
+**Windows** : le plus simple est WSL (section Linux ci-dessus). Sinon, en natif (PowerShell,
+avec Python depuis [python.org](https://www.python.org/downloads/) ou le Microsoft Store) :
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+```
+
+## 2. myges
+
+Dans un **nouveau terminal** :
+
+```bash
+pipx install "myges-api[cli] @ https://github.com/Arnaudmyges/myges-api/archive/refs/heads/main.zip"
+myges login
+```
+
+## Mise à jour
+
+```bash
+pipx reinstall myges-api
+myges --version
+```
+
+## Complétion avec Tab
+
+```bash
+myges --install-completion     # bash, zsh, fish, PowerShell ; puis nouveau terminal
+```
+
+## WSL : retrouver les supports dans l'Explorateur Windows
+
+Télécharger vers le disque Windows plutôt que dans le dossier Linux :
+
+```bash
+myges files --download /mnt/c/Users/<toi>/Documents/cours
+```
+
+## Désinstaller
+
+```bash
+pipx uninstall myges-api
+rm -rf ~/.config/myges ~/.cache/myges ~/.local/state/myges   # compte, session, état
+```
