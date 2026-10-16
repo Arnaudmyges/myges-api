@@ -88,6 +88,31 @@ Une matière se désigne par son numéro `#` (affiché dans `courses`, `grades`,
 `myges --help` liste toutes les commandes, et `--json` donne la sortie brute de chacune.
 La session dure ~6 jours ; ensuite, relancer `myges login`.
 
+## Alertes : nouvelles notes, supports, cours annulés
+
+`myges watch` signale ce qui a changé depuis son dernier passage (notes, absences, supports
+de cours, cours ajoutés / déplacés / annulés dans les 14 prochains jours) et l'envoie où
+vous voulez :
+
+```bash
+myges notify add ntfy            # notifications sur téléphone (appli ntfy), sujet aléatoire
+myges notify add discord <webhook>
+myges notify add email moi@exemple.fr --smtp smtp.gmail.com --user moi@gmail.com
+myges notify test                # vérifier que ça arrive
+
+myges login --save-password      # pour que la session se renouvelle sans vous
+myges watch                      # le 1er passage enregistre l'état actuel
+```
+
+Puis le lancer régulièrement, par exemple toutes les 30 minutes (`crontab -e`) :
+
+```
+*/30 * * * * $HOME/.local/bin/myges watch --quiet
+```
+
+Les notes et absences sont des données personnelles : garder un sujet ntfy aléatoire et un
+salon Discord privé.
+
 ## Bibliothèque
 
 ```python

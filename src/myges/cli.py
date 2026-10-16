@@ -29,9 +29,11 @@ except ImportError:  # pragma: no cover
 
 from pydantic import BaseModel
 
+from . import notify
+from . import watch as watch_mod
 from ._version import __version__
 from .client import MyGES
-from .errors import MyGESError
+from .errors import MyGESError, TokenExpiredError
 from .ics import to_ics
 from .models import AgendaEvent
 
@@ -82,25 +84,54 @@ def _config_path() -> Path:
     return Path(base) / "myges" / "config.json"
 
 
-def _saved_username() -> str | None:
+def _load_config() -> dict[str, Any]:
     try:
-        value = json.loads(_config_path().read_text(encoding="utf-8")).get("username")
-    except (OSError, ValueError, AttributeError):
-        return None
+        data = json.loads(_config_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _store_config(data: dict[str, Any]) -> None:
+    """Écrit la config en 0600 : elle peut contenir webhooks et mot de passe SMTP."""
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+    path.chmod(0o600)
+
+
+def _saved_username() -> str | None:
+    value = _load_config().get("username")
     return value if isinstance(value, str) and value else None
 
 
-def _save_username(username: str | None) -> None:
-    path = _config_path()
+def _save_username(username: str | None, password: str | None = None) -> None:
+    """Retient le compte (et, sur demande explicite, son mot de passe) ; None l'oublie."""
+    config = _load_config()
+    config.pop("password", None)
     if username is None:
-        path.unlink(missing_ok=True)
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"username": username}), encoding="utf-8")
+        config.pop("username", None)
+    else:
+        config["username"] = username
+        if password is not None:
+            config["password"] = password
+    _store_config(config)
 
 
 def _current_username() -> str | None:
     return os.environ.get("MYGES_USERNAME") or _saved_username()
+
+
+def _current_password() -> str | None:
+    if os.environ.get("MYGES_PASSWORD"):
+        return os.environ["MYGES_PASSWORD"]
+    saved = _load_config().get("password")
+    # Le mot de passe enregistré ne vaut que pour le compte enregistré.
+    if isinstance(saved, str) and _current_username() == _saved_username():
+        return saved
+    return None
 
 
 def _not_logged_in() -> typer.Exit:
@@ -117,7 +148,7 @@ def _client(password: str | None = None) -> Iterator[MyGES]:
     try:
         with MyGES(
             username,
-            password or os.environ.get("MYGES_PASSWORD"),
+            password or _current_password(),
             token=token,
         ) as client:
             yield client
@@ -233,6 +264,14 @@ def login(
     username: Annotated[
         str | None, typer.Option("--username", "-u", envvar="MYGES_USERNAME")
     ] = None,
+    save_password: Annotated[
+        bool,
+        typer.Option(
+            "--save-password",
+            help="Retenir aussi le mot de passe (fichier 0600) pour renouveler la session "
+            "sans intervention, utile pour `myges watch` en tâche planifiée.",
+        ),
+    ] = False,
 ) -> None:
     """Se connecter : le compte est retenu pour les commandes suivantes."""
     username = username or typer.prompt("Identifiant myGES", default=_saved_username())
@@ -243,11 +282,15 @@ def login(
     except MyGESError as exc:
         err.print(f"[red]Échec :[/] {exc}")
         raise typer.Exit(1) from exc
-    _save_username(username)
+    _save_username(username, password if save_password else None)
     console.print(
         f"[green]Connecté en tant que {username}.[/] "
         f"Session valide jusqu'au {_fmt_dt(token.expires_at)}."
     )
+    if save_password:
+        console.print(
+            f"[dim]Mot de passe enregistré dans {_config_path()} (lisible par vous seul).[/]"
+        )
 
 
 @app.command()
@@ -758,6 +801,245 @@ def campus(json_: JsonOpt = False) -> None:
             ("Adresse", lambda c: f"{c.address}, {c.zipcode} {c.city}"),
         ],
     )
+
+
+# ---------------------------------------------------------------- Alertes
+
+
+def _state_path(username: str) -> Path:
+    base = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", username)
+    return Path(base) / "myges" / f"watch-{safe}.json"
+
+
+def _channels() -> list[notify.Channel]:
+    channels = _load_config().get("notify", [])
+    return channels if isinstance(channels, list) else []
+
+
+def _broadcast(title: str, body: str) -> int:
+    """Envoie à tous les canaux ; renvoie le nombre d'échecs (signalés sur stderr)."""
+    failures = 0
+    for channel in _channels():
+        try:
+            notify.send(channel, title, body)
+        except Exception as exc:  # un canal en panne ne doit pas bloquer les autres
+            failures += 1
+            err.print(f"[red]Échec d'envoi[/] ({notify.describe(channel)}) : {exc}")
+    return failures
+
+
+def _take_snapshot(client: MyGES) -> watch_mod.Snapshot:
+    now = datetime.now(_TZ)
+    catalog = _Courses(client, None)
+    files = {
+        c.rc_id: (c.name, client.course_files(c.rc_id)) for c in catalog.items if c.has_documents
+    }
+    return watch_mod.snapshot(
+        grades=client.grades(),
+        absences=client.absences(),
+        files=files,
+        agenda=client.agenda(now, now + watch_mod.AGENDA_HORIZON),
+        now=now,
+    )
+
+
+@app.command()
+def watch(
+    quiet: Annotated[
+        bool, typer.Option("--quiet", "-q", help="Ne rien afficher s'il n'y a rien de nouveau.")
+    ] = False,
+    no_notify: Annotated[
+        bool, typer.Option("--no-notify", help="Afficher sans envoyer de notification.")
+    ] = False,
+) -> None:
+    """Signaler les nouveautés depuis le dernier passage : notes, absences, supports, agenda.
+
+    À lancer régulièrement (cron, tâche planifiée). Les nouveautés sont envoyées aux canaux
+    configurés avec `myges notify add`. Le premier passage enregistre seulement l'état.
+    """
+    username = _current_username()
+    if username is None:
+        raise _not_logged_in()
+    path = _state_path(username)
+    try:
+        previous: dict[str, Any] | None = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = None
+
+    try:
+        with MyGES(username, _current_password()) as client:
+            current = _take_snapshot(client)
+    except TokenExpiredError:
+        # Une seule alerte par expiration, pas une toutes les 30 minutes.
+        if previous is not None and not previous.get("expired_notified"):
+            if not no_notify:
+                _broadcast(
+                    "myGES : session expirée",
+                    "ℹ️ La session myGES a expiré : relancer `myges login` "
+                    "(ou `myges login --save-password` pour ne plus avoir à le faire).",
+                )
+            previous["expired_notified"] = True
+            _write_state(path, previous)
+        err.print("[red]Session expirée.[/] Relancer `myges login`.")
+        raise typer.Exit(1) from None
+    except MyGESError as exc:
+        err.print(f"[red]Erreur :[/] {exc}")
+        raise typer.Exit(1) from exc
+
+    _write_state(path, current)
+    if previous is None:
+        console.print(
+            f"État initial enregistré ({len(current['grades'])} matières notées, "
+            f"{sum(len(f['items']) for f in current['files'].values())} supports, "
+            f"{len(current['agenda'])} cours à venir). "
+            "Les prochains passages signaleront les nouveautés."
+        )
+        if not _channels():
+            console.print("[dim]Aucun canal de notification : voir `myges notify add --help`.[/]")
+        return
+
+    changes = watch_mod.diff(previous, current, _TZ)
+    if not changes:
+        if not quiet:
+            console.print("[dim]Rien de nouveau.[/]")
+        return
+    title, body = notify.format_changes(changes)
+    console.print(f"[bold]{title}[/]\n{body}")
+    if not no_notify and _broadcast(title, body):
+        raise typer.Exit(1)
+
+
+def _write_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, ensure_ascii=False)
+
+
+notify_app = typer.Typer(
+    help="Canaux de notification de `myges watch` (ntfy, Discord, e-mail).",
+    no_args_is_help=True,
+)
+add_app = typer.Typer(help="Ajouter un canal de notification.", no_args_is_help=True)
+notify_app.add_typer(add_app, name="add")
+app.add_typer(notify_app, name="notify")
+
+
+def _add_channel(channel: notify.Channel) -> None:
+    config = _load_config()
+    config["notify"] = [*_channels(), channel]
+    _store_config(config)
+    console.print(f"[green]Canal ajouté :[/] {notify.describe(channel)}")
+    console.print("[dim]Vérifier avec `myges notify test`.[/]")
+
+
+@add_app.command("ntfy")
+def notify_add_ntfy(
+    topic: Annotated[
+        str | None,
+        typer.Argument(help="Sujet ntfy (défaut : un sujet aléatoire, impossible à deviner)."),
+    ] = None,
+    server: Annotated[str, typer.Option(help="Serveur ntfy.")] = notify.NTFY_SERVER,
+    token: Annotated[str | None, typer.Option(help="Jeton d'accès, pour un sujet protégé.")] = None,
+) -> None:
+    """Notifications push sur téléphone avec l'appli ntfy (Android, iOS, web).
+
+    Sur ntfy.sh, quiconque connaît le sujet peut lire les messages : garder le sujet
+    aléatoire proposé par défaut, et s'y abonner dans l'appli ntfy.
+    """
+    channel: notify.Channel = {
+        "type": "ntfy",
+        "server": server,
+        "topic": topic or notify.random_topic(),
+    }
+    if token:
+        channel["token"] = token
+    _add_channel(channel)
+    console.print(
+        f"Dans l'appli ntfy, s'abonner au sujet [bold]{channel['topic']}[/]"
+        + (f" sur {server}." if server != notify.NTFY_SERVER else ".")
+    )
+
+
+@add_app.command("discord")
+def notify_add_discord(
+    webhook: Annotated[
+        str, typer.Argument(help="URL du webhook (salon > Paramètres > Intégrations > Webhooks).")
+    ],
+) -> None:
+    """Messages dans un salon Discord, via un webhook.
+
+    Les notes et absences sont des données personnelles : préférer un serveur ou un salon
+    privé.
+    """
+    if not webhook.startswith(("https://discord.com/api/webhooks/", "https://discordapp.com/")):
+        err.print("[yellow]Cette URL ne ressemble pas à un webhook Discord.[/]")
+    _add_channel({"type": "discord", "webhook": webhook})
+
+
+@add_app.command("email")
+def notify_add_email(
+    to: Annotated[str, typer.Argument(help="Destinataire.")],
+    smtp: Annotated[
+        str, typer.Option(help="Serveur SMTP hôte[:port] (587 STARTTLS par défaut, 465 SSL).")
+    ],
+    user: Annotated[str | None, typer.Option(help="Identifiant SMTP (souvent l'adresse).")] = None,
+    sender: Annotated[
+        str | None, typer.Option("--from", help="Expéditeur (défaut : --user).")
+    ] = None,
+) -> None:
+    """E-mail via un serveur SMTP. Le mot de passe est demandé puis stocké en 0600.
+
+    Gmail : activer la validation en deux étapes et utiliser un « mot de passe
+    d'application » (`--smtp smtp.gmail.com --user vous@gmail.com`).
+    """
+    host, _, port = smtp.partition(":")
+    channel: notify.Channel = {"type": "email", "to": to, "host": host, "port": int(port or 587)}
+    if user:
+        channel["user"] = user
+        channel["password"] = typer.prompt("Mot de passe SMTP", hide_input=True)
+    if sender:
+        channel["sender"] = sender
+    _add_channel(channel)
+
+
+@notify_app.command("list")
+def notify_list() -> None:
+    """Canaux configurés."""
+    channels = _channels()
+    if not channels:
+        console.print("[dim]Aucun canal. Voir `myges notify add --help`.[/]")
+    for number, channel in enumerate(channels, 1):
+        console.print(f"{number}. {notify.describe(channel)}")
+
+
+@notify_app.command("remove")
+def notify_remove(
+    number: Annotated[int, typer.Argument(help="Numéro donné par `myges notify list`.")],
+) -> None:
+    """Supprimer un canal."""
+    channels = _channels()
+    if not 1 <= number <= len(channels):
+        err.print("[red]Numéro inconnu.[/] Voir `myges notify list`.")
+        raise typer.Exit(2)
+    removed = channels.pop(number - 1)
+    config = _load_config()
+    config["notify"] = channels
+    _store_config(config)
+    console.print(f"Canal supprimé : {notify.describe(removed)}")
+
+
+@notify_app.command("test")
+def notify_test() -> None:
+    """Envoyer un message de test à tous les canaux."""
+    if not _channels():
+        err.print("[red]Aucun canal configuré.[/] Voir `myges notify add --help`.")
+        raise typer.Exit(2)
+    failures = _broadcast("myGES : test", "✅ Les notifications de myges watch arrivent bien ici.")
+    if failures:
+        raise typer.Exit(1)
+    console.print(f"[green]Message de test envoyé à {len(_channels())} canal(aux).[/]")
 
 
 # ---------------------------------------------------------------- Exploration
