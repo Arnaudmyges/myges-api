@@ -111,3 +111,14 @@ Observé en réel à l'ouverture des inscriptions du « Cloud Day » (12:00) :
   simultanées sont envoyées en parallèle plutôt qu'à la suite.
 - `/me/events` ne renvoie aucun en-tête de cache (`Cache-Control: no-store`, pas d'`ETag`) :
   toute surveillance relit les listes en entier.
+
+## 2026-10-16 — Fichiers de projet, documents de l'école
+
+- `GET /me/projectFiles/{pf_id}` renvoie le fichier joint à un projet (cahier des charges…),
+  brut, avec le même `Content-Type: application/json` erroné que les supports de cours.
+  Aucune autre forme (`/me/projects/{id}/files/…`) n'existe.
+- La consigne d'un rendu (dates, modalités) est dans `steps[].psp_desc` du projet, en HTML.
+  Un projet peut avoir plusieurs étapes portant le même numéro et le même type.
+- `myges.fr/common/student-documents` (certificat de scolarité, calendriers, électifs,
+  documents apprentis…) : aucun équivalent dans l'API parmi 43 noms testés. Ces documents
+  ne sont accessibles que par le site web (session CAS).
