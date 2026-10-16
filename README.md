@@ -21,12 +21,12 @@ sur ton téléphone. Et la documentation Swagger complète de l'API myGES.
 ## Installation
 
 ```bash
-sudo apt install pipx && pipx ensurepath      # macOS : brew install pipx — Windows : voir docs
+sudo apt install pipx && pipx ensurepath     # puis ouvrir un nouveau terminal
 pipx install "myges-api[cli] @ https://github.com/Arnaudmyges/myges-api/archive/refs/heads/main.zip"
 myges login
 ```
 
-Autres systèmes, mise à jour, complétion : [docs/installation.md](docs/installation.md).
+macOS, Windows, mise à jour : [docs/installation.md](docs/installation.md).
 
 ## Utilisation
 
