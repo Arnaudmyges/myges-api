@@ -9,8 +9,8 @@ Dépendances : `httpx` et `pydantic` uniquement (la CLI est dans l'extra `[cli]`
 ```python
 from myges import MyGES
 
-with MyGES("jdupont", "motdepasse") as ges:      # ou MyGES.from_env()
-    for note in ges.grades():                    # année la plus récente par défaut
+with MyGES("jdupont", "motdepasse") as ges:  # ou MyGES.from_env()
+    for note in ges.grades():  # année la plus récente par défaut
         print(note.course, note.average)
 
     for matiere in ges.courses():

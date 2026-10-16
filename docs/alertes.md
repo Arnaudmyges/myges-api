@@ -30,25 +30,27 @@ webhook → Copier l'URL**. Préférer un serveur ou un salon privé.
 vous seul. Gmail : activer la validation en deux étapes et créer un
 [mot de passe d'application](https://myaccount.google.com/apppasswords).
 
-## 2. Lancer régulièrement
+## 2. Activer
 
 ```bash
 myges login --save-password      # la session se renouvelle sans vous
-myges watch                      # 1er passage : enregistre l'état actuel
+myges watch --install            # vérifie toutes les 30 min (--every 10 pour plus souvent)
 ```
 
-Puis, sous Linux / macOS / WSL, `crontab -e` et ajouter (toutes les 30 minutes) :
+`--install` ajoute une ligne à votre crontab (Linux, macOS, WSL) ou une tâche planifiée
+(Windows), et signale ce qui empêcherait les alertes d'arriver : aucun canal, mot de passe
+non enregistré, cron arrêté. Sous **WSL**, cron ne démarre pas tout seul :
+`sudo service cron start`.
 
-```
-*/30 * * * * $HOME/.local/bin/myges watch --quiet
-```
+Arrêter : `myges watch --uninstall`.
 
-Sans `--save-password`, la tâche s'arrête à l'expiration de la session (~6 jours) : une seule
-alerte vous demande alors de relancer `myges login`.
+Sans `--save-password`, les alertes s'arrêtent à l'expiration de la session (~6 jours) : une
+seule alerte vous demande alors de relancer `myges login`.
 
 ## Options
 
 ```bash
+myges watch                      # vérifier tout de suite, à la main
 myges watch --no-notify          # afficher sans envoyer
 myges watch --quiet              # rien afficher s'il n'y a rien de nouveau
 ```

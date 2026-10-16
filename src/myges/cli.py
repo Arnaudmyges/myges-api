@@ -29,7 +29,7 @@ except ImportError:  # pragma: no cover
 
 from pydantic import BaseModel
 
-from . import notify
+from . import notify, schedule
 from . import watch as watch_mod
 from ._version import __version__
 from .client import MyGES
@@ -1008,15 +1008,27 @@ def watch(
     no_notify: Annotated[
         bool, typer.Option("--no-notify", help="Afficher sans envoyer de notification.")
     ] = False,
+    install: Annotated[
+        bool,
+        typer.Option("--install", help="Lancer automatiquement toutes les --every minutes (cron)."),
+    ] = False,
+    uninstall: Annotated[
+        bool, typer.Option("--uninstall", help="Arrêter le lancement automatique.")
+    ] = False,
+    every: Annotated[int, typer.Option(help="Intervalle en minutes, avec --install.")] = 30,
 ) -> None:
     """Signaler les nouveautés depuis le dernier passage : notes, absences, supports, agenda.
 
-    À lancer régulièrement (cron, tâche planifiée). Les nouveautés sont envoyées aux canaux
-    configurés avec `myges notify add`. Le premier passage enregistre seulement l'état.
+    Les nouveautés sont envoyées aux canaux configurés avec `myges notify add`. Le premier
+    passage enregistre seulement l'état. `myges watch --install` le lance automatiquement.
     """
+    if uninstall:
+        return _watch_uninstall()
     username = _current_username()
     if username is None:
         raise _not_logged_in()
+    if install:
+        return _watch_install(every)
     path = _state_path(username)
     try:
         previous: dict[str, Any] | None = json.loads(path.read_text(encoding="utf-8"))
@@ -1066,6 +1078,45 @@ def watch(
         raise typer.Exit(1)
 
 
+def _watch_install(every: int) -> None:
+    try:
+        done = schedule.install(every)
+    except schedule.ScheduleError as exc:
+        err.print(f"[red]Échec :[/] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]Alertes automatiques activées[/] ({done}).")
+    # Ce qui empêcherait les alertes d'arriver, avec la solution.
+    if not _channels():
+        console.print(
+            "[yellow]![/] Aucun canal : les nouveautés ne seront envoyées nulle part. "
+            "Ajouter `myges notify add ntfy` (ou discord, email)."
+        )
+    if _current_password() is None:
+        console.print(
+            "[yellow]![/] Mot de passe non enregistré : les alertes s'arrêteront quand la "
+            "session expirera (~6 jours). `myges login --save-password` pour l'éviter."
+        )
+    if schedule.cron_running() is False:
+        if schedule.is_wsl():
+            console.print(
+                "[yellow]![/] cron ne tourne pas (cas par défaut sous WSL) : "
+                "`sudo service cron start`. Pour le démarrer avec WSL, ajouter dans "
+                '/etc/wsl.conf : [boot] command="service cron start"'
+            )
+        else:
+            console.print("[yellow]![/] cron ne tourne pas : `sudo systemctl enable --now cron`.")
+    console.print(f"[dim]Premier passage d'ici {every} min ; arrêt : `myges watch --uninstall`.[/]")
+
+
+def _watch_uninstall() -> None:
+    try:
+        removed = schedule.uninstall()
+    except schedule.ScheduleError as exc:
+        err.print(f"[red]Échec :[/] {exc}")
+        raise typer.Exit(1) from exc
+    console.print("Alertes automatiques désactivées." if removed else "[dim]Rien à désactiver.[/]")
+
+
 def _write_state(path: Path, state: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -1088,6 +1139,11 @@ def _add_channel(channel: notify.Channel) -> None:
     _store_config(config)
     console.print(f"[green]Canal ajouté :[/] {notify.describe(channel)}")
     console.print("[dim]Vérifier avec `myges notify test`.[/]")
+    if not schedule.installed():
+        console.print(
+            "Prochaine étape : [bold]myges watch --install[/] pour recevoir les alertes "
+            "automatiquement."
+        )
 
 
 @add_app.command("ntfy")
