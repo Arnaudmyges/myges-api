@@ -1359,7 +1359,7 @@ def _watch_install(every: int) -> None:
             )
         else:
             console.print("[yellow]![/] cron ne tourne pas : `sudo systemctl enable --now cron`.")
-    console.print(f"[dim]Premier passage d'ici {every} min ; arrêt : `myges watch --uninstall`.[/]")
+    console.print("[dim]Arrêter : `myges watch --uninstall`.[/]")
 
 
 def _watch_uninstall() -> None:
