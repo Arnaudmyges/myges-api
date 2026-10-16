@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://arnaudmyges.github.io/myges-api/sitemap.xml
