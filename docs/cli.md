@@ -76,7 +76,7 @@ s'inscrit à la seconde près.
 
 ```bash
 myges events                        # événements à venir : id, ouverture, inscrit / pré-inscrit
-myges events subscribe 4525 4529 -b # pré-inscription : s'inscrit à l'ouverture, en arrière-plan
+myges events subscribe 4525 4529    # s'inscrit à l'ouverture, en arrière-plan
 myges events pending                # pré-inscriptions en attente
 myges events cancel 4525            # annuler une pré-inscription (avant l'ouverture)
 myges events unsubscribe 4525       # se désinscrire (après)
@@ -86,9 +86,10 @@ myges events unsubscribe 4525       # se désinscrire (après)
   l'adresse `myges.fr/common/event/4525` à la place.
 - Chaque événement est tenté à **sa** propre heure d'ouverture, relue juste avant (si l'école
   la déplace, la nouvelle est suivie), selon l'horloge du serveur myGES.
-- Sans `-b`, la commande attend dans le terminal. La mise en veille ne gêne pas ; un **arrêt
-  de la machine** interrompt l'attente : `myges events` affiche alors « ⚠ interrompu », il
-  suffit de relancer `subscribe`.
+- Si les inscriptions ne sont pas encore ouvertes, l'attente se fait en arrière-plan et la
+  commande rend la main (`--wait` pour attendre dans le terminal). La mise en veille ne gêne
+  pas ; un **arrêt de la machine** interrompt l'attente : `myges events` affiche alors
+  « ⚠ interrompu », il suffit de relancer `subscribe`.
 - Résultat envoyé sur vos canaux d'[alertes](alertes.md) s'il y en a.
 
 ## Vie de l'école et personnes

@@ -827,25 +827,38 @@ def events_subscribe(
             help="Identifiant (colonne id) ou adresse myges.fr/common/event/4525.",
         ),
     ],
-    background: Annotated[
+    wait: Annotated[
         bool,
-        typer.Option(
-            "--background", "-b", help="Attendre l'ouverture en arrière-plan (rend la main)."
-        ),
+        typer.Option("--wait", help="Attendre l'ouverture dans ce terminal, sans rendre la main."),
+    ] = False,
+    background: Annotated[
+        bool, typer.Option("--background", "-b", hidden=True)  # ancien comportement explicite
     ] = False,
 ) -> None:
-    """S'inscrire, dès l'ouverture des inscriptions si elles ne sont pas encore ouvertes.
+    """S'inscrire à l'ouverture des inscriptions (ou tout de suite si elles sont ouvertes).
 
-    Attend l'heure d'ouverture de chaque événement (horloge du serveur), puis réessaie
-    toutes les demi-secondes pendant 3 minutes. Avec `-b`, l'attente se fait en arrière-plan :
-    suivre avec `myges events pending`, annuler avec `myges events cancel`. Mise en veille
-    sans effet ; un arrêt de la machine interrompt l'attente.
+    Si l'ouverture est à venir, l'attente se fait en arrière-plan et la commande rend la
+    main : suivre avec `myges events pending`, annuler avec `myges events cancel`. Chaque
+    événement est tenté à son heure d'ouverture (horloge du serveur), toutes les
+    demi-secondes pendant 3 minutes. Mise en veille sans effet ; un arrêt de la machine
+    interrompt l'attente.
     """
     from .registration import subscribe_at_opening
 
     event_ids = [_event_id(ref) for ref in events_ref]
-    if background:
-        return _subscribe_in_background(events_ref, event_ids)
+    if not wait and not os.environ.get("MYGES_BACKGROUND"):
+        with _client() as client:
+            now = datetime.now(_TZ)
+            opens_later = [
+                e.event_id
+                for e in client.events()
+                if e.event_id in event_ids
+                and not e.is_participant_subscribed
+                and e.start_subscription_date is not None
+                and e.start_subscription_date > now
+            ]
+        if opens_later or background:
+            return _subscribe_in_background(event_ids)
 
     pid = os.getpid()
     with _client(allow_writes=True) as client:
@@ -863,8 +876,7 @@ def events_subscribe(
         pending_mod.register(waiting)
         if waiting and not os.environ.get("MYGES_BACKGROUND"):
             console.print(
-                "[dim]Laisser ce terminal ouvert jusqu'à l'ouverture "
-                "(ou relancer avec -b pour l'arrière-plan).[/]"
+                "[dim]Attente dans ce terminal : le laisser ouvert jusqu'à l'ouverture.[/]"
             )
         try:
             outcome = subscribe_at_opening(
@@ -895,7 +907,7 @@ def events_subscribe(
         raise typer.Exit(1)
 
 
-def _subscribe_in_background(refs: list[str], event_ids: list[int]) -> None:
+def _subscribe_in_background(event_ids: list[int]) -> None:
     """Relance la commande, détachée du terminal, sortie dans le journal d'état."""
     import subprocess
     import time
@@ -903,14 +915,16 @@ def _subscribe_in_background(refs: list[str], event_ids: list[int]) -> None:
     base = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
     log_path = Path(base) / "myges" / "events-background.log"
     log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    command = [sys.executable, "-m", "myges.cli", "events", "subscribe", *refs]
+    # --wait : le processus détaché attend lui-même au lieu de se relancer à son tour.
+    command = [sys.executable, "-m", "myges.cli", "events", "subscribe", *map(str, event_ids),
+               "--wait"]  # fmt: skip
     options: dict[str, Any] = {}
     if sys.platform == "win32":
         options["creationflags"] = 0x00000008 | 0x00000200  # DETACHED | NEW_PROCESS_GROUP
     else:
         options["start_new_session"] = True  # survit à la fermeture du terminal
     with log_path.open("a", encoding="utf-8") as log:
-        log.write(f"--- {datetime.now(_TZ).isoformat()} : {' '.join(refs)}\n")
+        log.write(f"--- {datetime.now(_TZ).isoformat()} : {' '.join(map(str, event_ids))}\n")
         log.flush()
         child = subprocess.Popen(
             command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
@@ -939,7 +953,7 @@ def events_pending() -> None:
     """Pré-inscriptions en attente de l'ouverture des inscriptions."""
     entries = pending_mod.load()
     if not entries:
-        console.print("[dim]Aucune pré-inscription. `myges events subscribe <id> -b`.[/]")
+        console.print("[dim]Aucune pré-inscription. `myges events subscribe <id>`.[/]")
         return
     with _client() as client:
         titles = {e.event_id: e.event_title for e in client.events()}

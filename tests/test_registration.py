@@ -311,7 +311,22 @@ def test_cancel_stops_an_idle_waiting_process(state: Path) -> None:
     assert pending.load() == []
 
 
-def test_background_returns_immediately(state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _events_opening_in(delta: timedelta, event_id: int = 4525) -> dict[str, Any]:
+    payload = copy.deepcopy(fixture("getEvents"))
+    event = payload["result"][0]
+    opens = datetime.now(timezone.utc) + delta
+    event.update(
+        event_id=event_id,
+        start_subscription_date=int(opens.timestamp() * 1000),
+        end_subscription_date=int((opens + timedelta(days=3)).timestamp() * 1000),
+        is_participant_subscribed=False,
+    )
+    return payload
+
+
+def test_background_by_default_when_not_yet_open(
+    state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     spawned: list[list[str]] = []
 
     class FakeChild:
@@ -327,7 +342,34 @@ def test_background_returns_immediately(state: Path, monkeypatch: pytest.MonkeyP
             return None
 
     monkeypatch.setattr("subprocess.Popen", FakeChild)
-    result = CliRunner().invoke(app, ["events", "subscribe", "4525", "-b"])
+    with respx.mock() as router:
+        router.get(f"{API_URL}/me/events").mock(
+            return_value=httpx.Response(200, json=_events_opening_in(timedelta(hours=2)))
+        )
+        result = CliRunner().invoke(app, ["events", "subscribe", "4525"])
     assert result.exit_code == 0, result.output
     assert "Pré-inscription enregistrée" in result.output
-    assert spawned[0][-3:] == ["events", "subscribe", "4525"]  # sans -b : pas de boucle
+    # Le processus détaché attend lui-même (--wait) au lieu de se relancer en boucle.
+    assert spawned[0][-3:] == ["subscribe", "4525", "--wait"]
+
+
+def test_already_open_registers_right_away(state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: pytest.fail("pas d'arrière-plan"))
+    payload = _events_opening_in(timedelta(hours=-1))
+
+    def accept(request: httpx.Request) -> httpx.Response:
+        payload["result"][0]["is_participant_subscribed"] = True
+        return httpx.Response(200, json={"response_code": 0, "result": None})
+
+    with respx.mock() as router:
+        router.get(f"{API_URL}/me/events").mock(
+            side_effect=lambda request: httpx.Response(200, json=payload)
+        )
+        router.get(f"{API_URL}/me/years").mock(
+            return_value=httpx.Response(200, json=fixture("getYears"))
+        )
+        post = router.post(f"{API_URL}/me/events/4525/subscribe").mock(side_effect=accept)
+        result = CliRunner().invoke(app, ["events", "subscribe", "4525"])
+    assert result.exit_code == 0, result.output
+    assert post.call_count == 1
+    assert "Inscrit" in result.output
