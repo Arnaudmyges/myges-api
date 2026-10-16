@@ -14,7 +14,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
 
@@ -61,6 +61,11 @@ def _opening(event: CampusEvent) -> datetime | None:
     return event.start_subscription_date
 
 
+def _next_opening(pending: dict[int, CampusEvent], now: datetime) -> datetime:
+    """Prochaine heure d'ouverture parmi les événements restants (``now`` si déjà ouvert)."""
+    return max(min((_opening(e) or now for e in pending.values()), default=now), now)
+
+
 def subscribe_at_opening(
     client: MyGES,
     event_ids: Iterable[int],
@@ -68,6 +73,7 @@ def subscribe_at_opening(
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     sleep: Callable[[float], None] = time.sleep,
     log: Callable[[str], None] = print,
+    tz: tzinfo | None = None,
 ) -> Outcome:
     """Inscrit à chaque événement dès que possible ; bloque jusqu'à la fin.
 
@@ -105,28 +111,54 @@ def subscribe_at_opening(
     if not pending:
         return outcome
 
-    openings = [o for o in (_opening(e) for e in pending.values()) if o is not None]
-    start = min(openings, default=server_now())
-    if start > server_now():
-        log(f"Ouverture des inscriptions : {start.astimezone().strftime('%d/%m %H:%M:%S')}")
-        _sleep_until(start - REFRESH_BEFORE, server_now, sleep)
-        if client._can_login():
-            client.login()  # session neuve pour ne pas expirer au mauvais moment
-        _sleep_until(start - WAKE_BEFORE, server_now, sleep)
+    # Une « vague » par heure d'ouverture : deux événements ouvrant à 12:00 et 14:00 sont
+    # tentés chacun à leur heure, avec chacun sa fenêtre de RETRY_FOR.
+    while pending:
+        opening = _next_opening(pending, server_now())
+        if opening - WAKE_BEFORE > server_now():
+            shown = opening.astimezone(tz).strftime("%d/%m %H:%M:%S")
+            log(f"Ouverture des inscriptions : {shown} ; en attente, laisser ce terminal ouvert.")
+            _sleep_until(opening - REFRESH_BEFORE, server_now, sleep)
+            # L'école a pu déplacer l'ouverture depuis le lancement : on relit avant d'agir.
+            fresh = {e.event_id: e for e in client.events()}
+            for event_id in list(pending):
+                event = fresh.get(event_id)
+                if event is None:
+                    continue
+                if event.is_participant_subscribed:  # inscrit entre-temps (site, appli)
+                    del pending[event_id]
+                else:
+                    pending[event_id] = event
+            if not pending:
+                break
+            moved = _next_opening(pending, server_now())
+            if moved != opening:
+                log("Heure d'ouverture modifiée par l'école : on suit la nouvelle.")
+                continue
+            if client._can_login():
+                client.login()  # session neuve pour ne pas expirer au mauvais moment
+            _sleep_until(opening - WAKE_BEFORE, server_now, sleep)
 
-    deadline = max(start, server_now()) + RETRY_FOR
-    while pending and server_now() < deadline:
-        for event_id in list(pending):
-            response = client._send("POST", f"/me/events/{event_id}/subscribe")
-            body = response.text[:300]
-            outcome.attempts.append(Attempt(server_now(), event_id, response.status_code, body))
-            if response.is_success:
-                log(f"✓ {event_id} : inscription acceptée (HTTP {response.status_code})")
-                del pending[event_id]
-            elif len([a for a in outcome.attempts if a.event_id == event_id]) == 1:
-                log(f"… {event_id} : HTTP {response.status_code}, on réessaie ({_reason(body)})")
-        if pending:
-            sleep(RETRY_EVERY)
+        wave = [i for i, e in pending.items() if (_opening(e) or opening) <= opening]
+        deadline = max(opening, server_now()) + RETRY_FOR
+        tries: dict[int, int] = {}
+        while wave and server_now() < deadline:
+            for event_id in list(wave):
+                response = client._send("POST", f"/me/events/{event_id}/subscribe")
+                body = response.text[:300]
+                outcome.attempts.append(Attempt(server_now(), event_id, response.status_code, body))
+                tries[event_id] = tries.get(event_id, 0) + 1
+                if response.is_success:
+                    log(f"✓ {event_id} : inscription acceptée (HTTP {response.status_code})")
+                    wave.remove(event_id)
+                elif tries[event_id] == 1:
+                    log(
+                        f"… {event_id} : HTTP {response.status_code}, on réessaie ({_reason(body)})"
+                    )
+            if wave:
+                sleep(RETRY_EVERY)
+        for event_id in [i for i, e in pending.items() if (_opening(e) or opening) <= opening]:
+            del pending[event_id]  # réussi ou abandonné : la vérification finale tranche
 
     # Vérification indépendante : la réponse HTTP ne suffit pas à conclure.
     confirmed = {e.event_id for e in client.events() if e.is_participant_subscribed}

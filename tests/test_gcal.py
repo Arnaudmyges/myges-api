@@ -1,4 +1,4 @@
-"""Synchro Google Agenda, contre une API Google simulée."""
+"""Synchro Google Calendar, contre une API Google simulée."""
 
 from __future__ import annotations
 

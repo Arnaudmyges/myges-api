@@ -1,6 +1,6 @@
-# Synchroniser myGES avec Google Agenda
+# Synchroniser myGES avec Google Calendar
 
-`myges gcal sync` recopie l'emploi du temps dans un agenda Google dédié, et le tient à jour :
+`myges gcal sync` recopie l'emploi du temps dans un agenda Google Calendar dédié, et le tient à jour :
 cours ajoutés, déplacés, annulés. Configuration : ~10 minutes, une seule fois.
 
 ## Pourquoi un compte de service
@@ -26,7 +26,7 @@ agenda principal.
 
 ## 3. Agenda dédié et partage
 
-1. Dans Google Agenda : **Autres agendas → + → Créer un agenda** (ex. « Cours myGES »).
+1. Dans Google Calendar : **Autres agendas → + → Créer un agenda** (ex. « Cours myGES »).
 2. **Paramètres et partage → Partager avec des personnes en particulier → Ajouter** :
    l'adresse du compte de service, permission **Apporter des modifications aux événements**.
 3. **Intégrer l'agenda → ID de l'agenda** : `xxxx@group.calendar.google.com`.

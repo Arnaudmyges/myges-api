@@ -69,11 +69,26 @@ myges blocs remove "Bloc 1" 3             # retirer une matière (sans matière 
 - Moyenne d'une matière : l'officielle, sinon la moyenne de contrôle continu (signalée `~`,
   provisoire), sinon la matière n'est pas comptée. Une note simulée est signalée `*`.
 
+## Événements : s'inscrire dès l'ouverture
+
+Les places partent vite : `subscribe` attend l'heure d'ouverture des inscriptions et
+s'inscrit à la seconde près.
+
+```bash
+myges events                     # événements à venir : id, ouverture des inscriptions, inscrit ?
+myges events subscribe 4525 4529 # inscrit tout de suite, ou attend l'ouverture
+myges events unsubscribe 4525
+```
+
+L'`id` est aussi le nombre à la fin de l'adresse de l'événement sur myGES
+(`myges.fr/common/event/4525`). En attente de l'ouverture, laisser le terminal ouvert (ou
+utiliser `tmux` sur un serveur). L'heure suivie est celle du serveur myGES, pas celle de la
+machine.
+
 ## Vie de l'école et personnes
 
 ```bash
 myges news                       # actualités
-myges events                     # événements du campus
 myges campus
 myges teachers
 myges classes
@@ -81,10 +96,10 @@ myges students <puid>            # étudiants d'une classe (puid donné par `myg
 myges profile
 ```
 
-## Alertes et Google Agenda
+## Alertes et Google Calendar
 
 - [Alertes](alertes.md) : `myges watch`, `myges notify …`
-- [Google Agenda](google-calendar.md) : `myges gcal …`
+- [Google Calendar](google-calendar.md) : `myges gcal …`
 
 ## Exploration de l'API
 

@@ -807,7 +807,13 @@ def _subscription_window(event: Any, now: datetime) -> str:
 
 @events_app.command("subscribe")
 def events_subscribe(
-    event_ids: Annotated[list[int], typer.Argument(help="Identifiants (colonne id, ou l'URL).")],
+    events_ref: Annotated[
+        list[str],
+        typer.Argument(
+            metavar="ÉVÉNEMENT...",
+            help="Identifiant (colonne id) ou adresse myges.fr/common/event/4525.",
+        ),
+    ],
 ) -> None:
     """S'inscrire, dès l'ouverture des inscriptions si elles ne sont pas encore ouvertes.
 
@@ -816,8 +822,9 @@ def events_subscribe(
     """
     from .registration import subscribe_at_opening
 
+    event_ids = [_event_id(ref) for ref in events_ref]
     with _client(allow_writes=True) as client:
-        outcome = subscribe_at_opening(client, event_ids, log=console.print)
+        outcome = subscribe_at_opening(client, event_ids, log=console.print, tz=_TZ)
         titles = {e.event_id: e.event_title for e in client.events()}
     for event_id in outcome.subscribed:
         console.print(f"[green]Inscrit[/] : {titles.get(event_id, event_id)}")
@@ -834,6 +841,15 @@ def events_subscribe(
         raise typer.Exit(1)
 
 
+def _event_id(ref: str) -> int:
+    """« 4525 » ou « https://myges.fr/common/event/4525 » → 4525."""
+    match = re.search(r"(\d+)/?$", ref.strip())
+    if match is None:
+        err.print(f"[red]Événement invalide : « {ref} ».[/] Donner l'id, ex. 4525.")
+        raise typer.Exit(2)
+    return int(match.group(1))
+
+
 def _log_attempts(outcome: Any) -> None:
     """Garde la trace brute des tentatives (diagnostic si l'école change ses règles)."""
     if not outcome.attempts:
@@ -848,11 +864,13 @@ def _log_attempts(outcome: Any) -> None:
 
 @events_app.command("unsubscribe")
 def events_unsubscribe(
-    event_ids: Annotated[list[int], typer.Argument(help="Identifiants des événements.")],
+    events_ref: Annotated[
+        list[str], typer.Argument(metavar="ÉVÉNEMENT...", help="Identifiant ou adresse.")
+    ],
 ) -> None:
     """Se désinscrire (possible tant que les inscriptions sont ouvertes)."""
     with _client(allow_writes=True) as client:
-        for event_id in event_ids:
+        for event_id in (_event_id(ref) for ref in events_ref):
             response = client._send("DELETE", f"/me/events/{event_id}/unsubscribe")
             if response.is_success:
                 console.print(f"Désinscrit de {event_id}.")
@@ -1330,10 +1348,11 @@ def notify_test() -> None:
     console.print(f"[green]Message de test envoyé à {len(_channels())} canal(aux).[/]")
 
 
-# ---------------------------------------------------------------- Google Agenda
+# ---------------------------------------------------------------- Google Calendar
 
 gcal_app = typer.Typer(
-    help="Synchroniser l'agenda myGES vers un agenda Google dédié.", no_args_is_help=True
+    help="Synchroniser l'agenda myGES vers un agenda Google Calendar dédié.",
+    no_args_is_help=True,
 )
 app.add_typer(gcal_app, name="gcal")
 
@@ -1341,7 +1360,7 @@ app.add_typer(gcal_app, name="gcal")
 def _gcal_settings() -> tuple[Path, str]:
     settings = _load_config().get("gcal") or {}
     if not settings.get("calendar_id"):
-        err.print("[red]Google Agenda non configuré.[/] Voir `myges gcal setup --help`.")
+        err.print("[red]Google Calendar non configuré.[/] Voir `myges gcal setup --help`.")
         raise typer.Exit(2)
     return Path(settings["key_file"]), str(settings["calendar_id"])
 
@@ -1356,7 +1375,7 @@ def gcal_setup(
     """Configurer la synchro (une fois). Guide pas à pas : docs/google-calendar.md du dépôt.
 
     1. Google Cloud : activer l'API Google Calendar, créer un compte de service et une clé JSON.
-    2. Google Agenda : créer un agenda dédié, le partager avec l'adresse du compte de
+    2. Google Calendar : créer un agenda dédié, le partager avec l'adresse du compte de
        service, droit « Apporter des modifications aux événements ».
     3. `myges gcal setup cle.json <id>@group.calendar.google.com`
     """
@@ -1392,7 +1411,7 @@ def gcal_sync(
         bool, typer.Option("--quiet", "-q", help="N'afficher que les modifications.")
     ] = False,
 ) -> None:
-    """Créer, mettre à jour et supprimer les cours dans l'agenda Google.
+    """Créer, mettre à jour et supprimer les cours dans l'agenda Google Calendar.
 
     Seuls les événements créés par cette commande sont touchés ; un cours annulé côté
     myGES disparaît de l'agenda.

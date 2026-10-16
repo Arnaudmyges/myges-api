@@ -45,9 +45,9 @@ Toutes les commandes : [docs/cli.md](docs/cli.md).
 Une nouvelle note, un nouveau support, un cours annulé ? Reçois-le sur ton téléphone, Discord
 ou par e-mail : [docs/alertes.md](docs/alertes.md).
 
-## Google Agenda
+## Google Calendar
 
-Ton emploi du temps dans Google Agenda, toujours à jour : [docs/google-calendar.md](docs/google-calendar.md).
+Ton emploi du temps dans Google Calendar, toujours à jour : [docs/google-calendar.md](docs/google-calendar.md).
 
 ## Pour les développeurs
 

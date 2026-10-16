@@ -1,6 +1,6 @@
-"""Synchronisation de l'agenda myGES vers un agenda Google dédié.
+"""Synchronisation de l'agenda myGES vers un agenda Google Calendar dédié.
 
-Authentification par **compte de service** : on crée un agenda dédié dans Google Agenda,
+Authentification par **compte de service** : on crée un agenda dédié dans Google Calendar,
 on le partage avec l'adresse du compte de service (« Apporter des modifications aux
 événements »), et la synchro tourne sans intervention. Un flux OAuth utilisateur ne
 conviendrait pas : tant que l'écran de consentement du projet Google est en « Test »,
@@ -37,7 +37,7 @@ _COMPARED = ("summary", "location", "description")
 
 
 class GoogleCalendarError(RuntimeError):
-    """Erreur renvoyée par l'API Google Agenda."""
+    """Erreur renvoyée par l'API Google Calendar."""
 
 
 def event_id(reservation_id: int) -> str:
@@ -79,7 +79,7 @@ def _same(existing: Mapping[str, Any], wanted: Mapping[str, Any]) -> bool:
 
 
 class GoogleCalendar:
-    """Accès minimal à un agenda Google via un compte de service (REST + httpx)."""
+    """Accès minimal à un agenda Google Calendar via un compte de service (REST + httpx)."""
 
     def __init__(
         self,
@@ -180,7 +180,7 @@ def _load_credentials(key_file: Path) -> Any:
         from google.oauth2 import service_account
     except ImportError as exc:  # pragma: no cover
         raise GoogleCalendarError(
-            "La synchro Google Agenda nécessite l'extra « gcal » : "
+            "La synchro Google Calendar nécessite l'extra « gcal » : "
             "pipx inject myges-api google-auth (ou pip install 'myges-api[gcal]')."
         ) from exc
     info = json.loads(key_file.read_text(encoding="utf-8"))
@@ -271,7 +271,7 @@ def sync(
     *,
     dry_run: bool = False,
 ) -> SyncReport:
-    """Aligne l'agenda Google sur ``events`` (créneaux myGES de ``now`` à ``now + days``)."""
+    """Aligne l'agenda Google Calendar sur ``events`` (créneaux de ``now`` à ``now + days``)."""
     now = now or datetime.now(timezone.utc)
     existing = calendar.managed_events(now - timedelta(days=1), now + timedelta(days=days))
     to_write, to_delete, unchanged = plan(events, existing, now)

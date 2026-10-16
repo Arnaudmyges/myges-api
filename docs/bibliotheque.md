@@ -49,7 +49,7 @@ async with AsyncMyGES.from_env() as ges:
 - `myges.ics.to_ics(events)` : export iCalendar.
 - `myges.watch` : instantanés et détection de changements (sans réseau).
 - `myges.blocs` : moyennes pondérées par bloc, simulation.
-- `myges.gcal` : synchro Google Agenda (extra `[gcal]`).
+- `myges.gcal` : synchro Google Calendar (extra `[gcal]`).
 - `myges.notify` : envoi ntfy / Discord / e-mail.
 
 Référence complète des endpoints : [Swagger](https://arnaudmyges.github.io/myges-api/docs/).
