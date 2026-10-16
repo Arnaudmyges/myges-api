@@ -265,3 +265,62 @@ def test_serve_unknown_event_is_404() -> None:
         server.server_close()
     assert response.status_code == 404
     assert "introuvable" in response.json()["error"]
+
+
+# ---------------------------------------------------------------- Projets
+
+
+def _mock_projects(router: respx.MockRouter) -> None:
+    mock_api(router, fixture("getGrades"))
+    router.get(f"{API_URL}/me/profile").mock(
+        return_value=httpx.Response(200, json=fixture("getProfile"))
+    )
+    router.get(f"{API_URL}/me/2026/projects").mock(
+        return_value=httpx.Response(200, json=fixture("getProjects"))
+    )
+
+
+def test_projects_show_my_group(home: Path) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        _mock_projects(router)
+        result = CliRunner().invoke(app, ["projects"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    row = next(line for line in result.output.splitlines() if "24001" in line)
+    assert "Groupe 1" in row  # le profil de la fixture (uid 100001) est dans le groupe 1
+
+
+def test_project_inspect_and_download(home: Path, tmp_path: Path) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        _mock_projects(router)
+        pdf = router.get(f"{API_URL}/me/projectFiles/9001").mock(
+            return_value=httpx.Response(
+                200, content=b"%PDF-sujet", headers={"content-type": "application/json"}
+            )
+        )
+        result = CliRunner().invoke(
+            app, ["projects", "--inspect", "cluster proxmox", "--download", str(tmp_path)]
+        )
+    assert result.exit_code == 0, result.output
+    assert "Mon groupe : Groupe 1 — Camille EXEMPLE" in result.output
+    assert "Rendu final" in result.output
+    assert "Dépôt du rapport." in result.output
+    assert "déposé : rapport.pdf" in result.output  # rendu déjà déposé par le groupe
+    saved = tmp_path / "Mise en place d'un cluster Proxmox" / "Sujet.pdf"
+    assert saved.read_bytes() == b"%PDF-sujet"
+    assert pdf.called
+
+
+def test_project_inspect_unknown(home: Path) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        _mock_projects(router)
+        result = CliRunner().invoke(app, ["projects", "--inspect", "chimie"])
+    assert result.exit_code == 2
+
+
+def test_project_file_name() -> None:
+    from myges.models import ProjectFile
+
+    assert ProjectFile(pf_title="Cahier des charges", pf_file="AbC123.pdf").filename == (
+        "Cahier des charges.pdf"
+    )
+    assert ProjectFile(pf_title="sujet.pdf", pf_file="x.pdf").filename == "sujet.pdf"

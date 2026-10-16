@@ -586,6 +586,34 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /me/projectFiles/{fileId}:
+    get:
+      tags: [Projets]
+      operationId: downloadProjectFile
+      summary: Télécharger un fichier de projet
+      description: |
+        Contenu brut d'un fichier joint à un projet (`project_files[].pf_id`), par exemple
+        le cahier des charges. Comme pour les supports de cours, le serveur annonce
+        `application/json` quel que soit le format : le nom vient de `pf_title` et
+        l'extension de `pf_file`.
+      x-verified: "2026-10-16"
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          description: "`pf_id` du fichier."
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Contenu du fichier (en-tête `Content-Type` erroné).
+          content:
+            application/json:
+              schema: { type: string, contentMediaType: application/octet-stream }
+            application/octet-stream:
+              schema: { type: string, contentMediaType: application/octet-stream }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /me/nextProjectSteps:
     get:
       tags: [Projets]

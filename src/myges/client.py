@@ -368,6 +368,10 @@ class MyGES(_BaseClient):
     def next_project_steps(self) -> list[m.NextProjectStep]:
         return _parse_list(m.NextProjectStep, self._get("/me/nextProjectSteps"))
 
+    def download_project_file(self, file_id: int) -> bytes:
+        """Contenu d'un fichier de projet (``ProjectFile.pf_id``), ex. cahier des charges."""
+        return self._content(self._send("GET", f"/me/projectFiles/{file_id}"))
+
     def project_group_messages(self, group_id: int) -> list[dict[str, Any]]:
         """Format des messages non documenté : renvoyés tels quels."""
         return list(self._get(f"/me/projectGroups/{group_id}/messages") or [])
@@ -614,6 +618,9 @@ class AsyncMyGES(_BaseClient):
 
     async def next_project_steps(self) -> list[m.NextProjectStep]:
         return _parse_list(m.NextProjectStep, await self._get("/me/nextProjectSteps"))
+
+    async def download_project_file(self, file_id: int) -> bytes:
+        return self._content(await self._send("GET", f"/me/projectFiles/{file_id}"))
 
     async def project_group_messages(self, group_id: int) -> list[dict[str, Any]]:
         return list(await self._get(f"/me/projectGroups/{group_id}/messages") or [])

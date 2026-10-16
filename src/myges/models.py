@@ -409,6 +409,14 @@ class ProjectFile(_Linked):
     pf_file: str | None = None
     pf_crea_date: Timestamp | None = None
 
+    @property
+    def filename(self) -> str:
+        """Nom lisible : intitulé + extension du fichier stocké (« Cahier des charges.pdf »)."""
+        stored = self.pf_file or ""
+        ext = stored[stored.rfind(".") :] if "." in stored else ""
+        title = (self.pf_title or stored or f"fichier-{self.pf_id}").strip()
+        return title if not ext or title.lower().endswith(ext.lower()) else f"{title}{ext}"
+
 
 class ProjectGroupStudent(_Linked):
     u_id: int | None = None

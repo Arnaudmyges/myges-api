@@ -48,8 +48,10 @@ préférer le nom dans les scripts.
 ## Projets
 
 ```bash
-myges projects
-myges practicals                 # TP
+myges projects                              # mon groupe et la prochaine échéance
+myges projects --inspect 24134              # (id ou nom) groupe, membres, consignes, pièces jointes
+myges projects --inspect proxmox --download # + télécharger les pièces jointes
+myges practicals                            # TP, mêmes options
 myges steps                      # prochaines échéances
 ```
 

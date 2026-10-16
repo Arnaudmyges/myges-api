@@ -735,49 +735,166 @@ def students(class_id: int, json_: JsonOpt = False) -> None:
 # ---------------------------------------------------------------- Projets
 
 
+ProjectInspect = Annotated[
+    str | None,
+    typer.Option(
+        "--inspect", "-i", metavar="PROJET",
+        help="Détail : mon groupe, membres, étapes et consignes, pièces jointes (id ou nom).",
+    ),
+]  # fmt: skip
+ProjectDownload = Annotated[
+    Path | None,
+    typer.Option(
+        "--download", metavar="[DOSSIER]",
+        help="Avec --inspect : télécharger les pièces jointes (défaut : dossier courant).",
+    ),
+]  # fmt: skip
+
+
+def _my_group(project: Any, uid: int) -> Any:
+    return next(
+        (g for g in project.groups
+         if any(st.u_id == uid for st in g.project_group_students or [])),
+        None,
+    )  # fmt: skip
+
+
+def _next_deadline(project: Any, now: datetime) -> datetime | None:
+    dates = [s.psp_limit_date for s in project.steps or [] if s.psp_limit_date]
+    upcoming = [d for d in dates if d >= now]
+    return min(upcoming, default=None)
+
+
+def _projects_command(
+    label: str, items: list[Any], uid: int, catalog: _Courses,
+    inspect: str | None, download: Path | None, client: MyGES,
+) -> None:  # fmt: skip
+    now = datetime.now(_TZ)
+    if inspect is not None:
+        return _inspect_project(items, inspect, uid, download, client)
+    _table(
+        label,
+        items,
+        [
+            ("id", lambda p: p.project_id),
+            ("#", lambda p: catalog.number(p.rc_id)),
+            (label[:-1] if label.endswith("s") else label, lambda p: p.name),
+            ("Mon groupe", lambda p: ((g := _my_group(p, uid)) and g.group_name) or "[dim]—[/]"),
+            ("Prochaine échéance", lambda p: _fmt_dt(_next_deadline(p, now))),
+        ],
+    )
+
+
+def _find_project(items: list[Any], ref: str) -> Any:
+    ref = ref.strip()
+    if ref.isdigit():
+        found = next((p for p in items if p.project_id == int(ref)), None)
+        if found is not None:
+            return found
+    words = _fold(ref).split()
+    matches = [p for p in items if all(w in _fold(p.name) for w in words)]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        err.print(f"[red]Aucun projet ne correspond à « {ref} ».[/]")
+    else:
+        err.print(f"[red]« {ref} » est ambigu[/], préciser parmi :")
+        for p in matches:
+            err.print(f"  {p.project_id}  {p.name}")
+    raise typer.Exit(2)
+
+
+def _inspect_project(
+    items: list[Any], ref: str, uid: int, download: Path | None, client: MyGES
+) -> None:
+    project = _find_project(items, ref)
+    group = _my_group(project, uid)
+    console.print(f"[bold]{project.name.strip()}[/]")
+    console.print(f"{project.course_name} · {project.author or '—'}")
+    if group is None:
+        console.print("[yellow]Vous n'êtes dans aucun groupe pour ce projet.[/]")
+    else:
+        members = ", ".join(
+            f"{st.firstname} {st.name}" for st in group.project_group_students or []
+        )
+        console.print(f"\n[bold]Mon groupe[/] : {group.group_name} — {members}")
+        if group.date_presentation:
+            console.print(f"Soutenance : {_fmt_dt(group.date_presentation)}")
+        console.print(
+            "Sujet : "
+            + ("[green]validé[/]" if group.subject_validated else "en attente de validation")
+        )
+        if group.teacher_comment:
+            console.print(f"Commentaire de l'intervenant : {_html_to_text(group.teacher_comment)}")
+    for step in sorted(
+        project.steps or [], key=lambda st: st.psp_limit_date or datetime.max.replace(tzinfo=_TZ)
+    ):
+        console.print(
+            f"\n[bold]Étape {step.psp_number} · {step.psp_type}[/]"
+            + (
+                f" — à rendre avant le {_fmt_dt(step.psp_limit_date)}"
+                if step.psp_limit_date
+                else ""
+            )
+        )
+        if step.psp_desc and step.psp_desc.strip():
+            console.print(_html_to_text(step.psp_desc))
+        delivered = [f for f in step.files or [] if group and f.pgr_id == group.project_group_id]
+        for f in delivered:
+            console.print(f"  [green]déposé[/] : {f.psf_name} ({_fmt_dt(f.psf_end_upload)})")
+    files = project.project_files or []
+    if files:
+        console.print("\n[bold]Pièces jointes[/]")
+        for f in files:
+            console.print(
+                f"  {f.filename}  [dim](ajoutée le {_fmt_dt(f.pf_crea_date, '%d/%m/%Y')})[/]"
+            )
+    if download is not None:
+        folder = download.expanduser() / _safe_name(project.name.strip())
+        for f in files:
+            dest = folder / _safe_name(f.filename)
+            if dest.exists():
+                console.print(f"[dim]déjà présent : {dest}[/]")
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + ".part")
+            tmp.write_bytes(client.download_project_file(f.pf_id))
+            tmp.replace(dest)
+            console.print(f"[green]↓[/] {dest}")
+        if not files:
+            console.print("[dim]Aucune pièce jointe à télécharger.[/]")
+
+
 @app.command()
-def projects(year: YearOpt = None, json_: JsonOpt = False) -> None:
-    """Projets de groupe."""
+def projects(
+    year: YearOpt = None,
+    inspect: ProjectInspect = None,
+    download: ProjectDownload = None,
+    json_: JsonOpt = False,
+) -> None:
+    """Projets de groupe : mon groupe et la prochaine échéance ; `--inspect` pour le détail."""
     with _client() as client:
         data = client.projects(year)
         if json_:
             return _dump(data)
         catalog = _Courses(client, year)
-    _table(
-        "Projets",
-        data,
-        [
-            ("#", lambda p: catalog.number(p.rc_id)),
-            ("Projet", lambda p: p.name),
-            ("Matière", lambda p: p.course_name),
-            ("Groupes", lambda p: len(p.groups)),
-        ],
-    )
+        _projects_command("Projets", data, client.profile().uid, catalog, inspect, download, client)
 
 
 @app.command()
-def practicals(year: YearOpt = None, json_: JsonOpt = False) -> None:
-    """Travaux pratiques (TP)."""
+def practicals(
+    year: YearOpt = None,
+    inspect: ProjectInspect = None,
+    download: ProjectDownload = None,
+    json_: JsonOpt = False,
+) -> None:
+    """Travaux pratiques (TP) : mon groupe et la prochaine échéance ; `--inspect` pour le détail."""
     with _client() as client:
         data = client.practicals(year)
         if json_:
             return _dump(data)
         catalog = _Courses(client, year)
-    _table(
-        "TP",
-        data,
-        [
-            ("#", lambda p: catalog.number(p.rc_id)),
-            ("TP", lambda p: p.name),
-            ("Matière", lambda p: p.course_name),
-            (
-                "Échéance",
-                lambda p: _fmt_dt(
-                    min((s.psp_limit_date for s in p.steps or [] if s.psp_limit_date), default=None)
-                ),
-            ),
-        ],
-    )
+        _projects_command("TP", data, client.profile().uid, catalog, inspect, download, client)
 
 
 @app.command()
@@ -2266,12 +2383,12 @@ def _default_download_dir(args: list[str]) -> list[str]:
     Typer ne gère pas les options à valeur facultative : on complète la ligne de
     commande avant de la lui passer. Limité à ``files`` (``-d`` vaut ``--days`` ailleurs).
     """
-    if not args or args[0] != "files":
+    if not args or args[0] not in ("files", "projects", "practicals"):
         return args
     out: list[str] = []
     for i, arg in enumerate(args):
         out.append(arg)
-        if arg in ("--download", "-d"):
+        if arg == "--download" or (arg == "-d" and args[0] == "files"):
             following = args[i + 1] if i + 1 < len(args) else None
             if following is None or following.startswith("-"):
                 out.append(".")
