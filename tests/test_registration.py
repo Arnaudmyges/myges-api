@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import copy
+import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import respx
+from typer.testing import CliRunner
 
 from conftest import fixture
-from myges import MemoryTokenStore, MyGES, WriteNotAllowedError
+from myges import MemoryTokenStore, MyGES, WriteNotAllowedError, pending
 from myges.auth import AUTH_URL
+from myges.cli import app
 from myges.client import API_URL
 from myges.registration import subscribe_at_opening
 
@@ -221,3 +226,108 @@ def test_event_reference_parsing(ref: str, expected: int) -> None:
     from myges.cli import _event_id
 
     assert _event_id(ref) == expected
+
+
+# ---------------------------------------------------------------- Pré-inscriptions
+
+
+def test_cancelled_pre_registration_is_dropped_before_opening() -> None:
+    clock = FakeClock(OPENING - timedelta(minutes=20))
+    school = FakeSchool(clock)
+    school.add(4501, OPENING)
+    with respx.mock(assert_all_called=False) as router:
+        school.mount(router)
+        with MyGES("jdupont", "secret", token_store=MemoryTokenStore(), allow_writes=True) as ges:
+            outcome = subscribe_at_opening(
+                ges,
+                [4501],
+                clock=clock,
+                sleep=clock.sleep,
+                log=lambda m: None,
+                wanted=lambda ids: set(),  # annulée entre-temps
+            )
+    assert outcome.cancelled == [4501]
+    assert outcome.failed == {}
+    assert 4501 not in school.attempts
+
+
+@pytest.fixture
+def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("MYGES_TOKEN", "tok")
+    monkeypatch.delenv("MYGES_USERNAME", raising=False)
+    return tmp_path
+
+
+def test_registry_roundtrip(state: Path) -> None:
+    now = OPENING.isoformat()
+    pending.register([pending.Pending(1, now, 111, now), pending.Pending(2, now, 111, now)])
+    pending.register([pending.Pending(2, now, 222, now)])  # remplacé par événement
+    assert {(p.event_id, p.pid) for p in pending.load()} == {(1, 111), (2, 222)}
+    assert pending.still_wanted({1, 2}, 111) == {1}
+    assert pending.remove({2}, pid=111) == []  # pas à ce processus
+    assert pending.remove({2}) == [2]
+
+
+def test_alive() -> None:
+    assert pending.alive(os.getpid()) is True
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    assert pending.alive(dead.pid) is False
+
+
+def test_events_listing_shows_pre_registrations(state: Path) -> None:
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    now = OPENING.isoformat()
+    payload = fixture("getEvents")
+    future = int((datetime.now(timezone.utc) + timedelta(days=5)).timestamp() * 1000)
+    second = copy.deepcopy(payload["result"][0])
+    second["event_id"] = 4502
+    payload["result"][0]["event_date"] = second["event_date"] = future
+    payload["result"].append(second)
+    pending.register(
+        [pending.Pending(4501, now, os.getpid(), now), pending.Pending(4502, now, dead.pid, now)]
+    )
+    with respx.mock() as router:
+        router.get(f"{API_URL}/me/events").mock(return_value=httpx.Response(200, json=payload))
+        result = CliRunner().invoke(app, ["events"], env={"COLUMNS": "200"})
+        listed = CliRunner().invoke(app, ["events", "pending"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "⏳ pré-inscrit" in result.output
+    assert "⚠ interrompu" in result.output
+    assert "⏳ en attente" in listed.output
+    assert "relancer subscribe" in listed.output
+
+
+def test_cancel_stops_an_idle_waiting_process(state: Path) -> None:
+    waiting = subprocess.Popen(["sleep", "60"])
+    now = OPENING.isoformat()
+    pending.register([pending.Pending(4501, now, waiting.pid, now)])
+    result = CliRunner().invoke(app, ["events", "cancel", "https://myges.fr/common/event/4501"])
+    assert result.exit_code == 0, result.output
+    assert "Pré-inscription annulée : 4501" in result.output
+    assert waiting.wait(timeout=5) != 0  # arrêté (SIGTERM)
+    assert pending.load() == []
+
+
+def test_background_returns_immediately(state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    spawned: list[list[str]] = []
+
+    class FakeChild:
+        pid = 424242
+
+        def __init__(self, command: list[str], **kwargs: Any) -> None:
+            spawned.append(command)
+            assert kwargs.get("start_new_session") is True
+            now = OPENING.isoformat()
+            pending.register([pending.Pending(4525, now, self.pid, now)])
+
+        def poll(self) -> None:
+            return None
+
+    monkeypatch.setattr("subprocess.Popen", FakeChild)
+    result = CliRunner().invoke(app, ["events", "subscribe", "4525", "-b"])
+    assert result.exit_code == 0, result.output
+    assert "Pré-inscription enregistrée" in result.output
+    assert spawned[0][-3:] == ["events", "subscribe", "4525"]  # sans -b : pas de boucle

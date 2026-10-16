@@ -40,6 +40,7 @@ class Attempt:
 class Outcome:
     subscribed: list[int] = field(default_factory=list)
     already: list[int] = field(default_factory=list)
+    cancelled: list[int] = field(default_factory=list)
     failed: dict[int, str] = field(default_factory=dict)
     attempts: list[Attempt] = field(default_factory=list)
 
@@ -74,17 +75,20 @@ def subscribe_at_opening(
     sleep: Callable[[float], None] = time.sleep,
     log: Callable[[str], None] = print,
     tz: tzinfo | None = None,
+    wanted: Callable[[set[int]], set[int]] | None = None,
 ) -> Outcome:
     """Inscrit à chaque événement dès que possible ; bloque jusqu'à la fin.
 
     Écriture côté myGES : le client doit avoir été créé avec ``allow_writes=True``.
+    ``wanted`` (facultatif) filtre, avant chaque ouverture, les événements toujours voulus :
+    c'est ainsi qu'une pré-inscription annulée entre-temps est abandonnée.
     """
     client._check_write("subscribe_at_opening")
     outcome = Outcome()
-    wanted = list(dict.fromkeys(event_ids))
+    requested = list(dict.fromkeys(event_ids))
     known = {e.event_id: e for e in client.events()}
     pending: dict[int, CampusEvent] = {}
-    for event_id in wanted:
+    for event_id in requested:
         event = known.get(event_id)
         if event is None:
             outcome.failed[event_id] = "événement introuvable dans /me/events"
@@ -117,7 +121,7 @@ def subscribe_at_opening(
         opening = _next_opening(pending, server_now())
         if opening - WAKE_BEFORE > server_now():
             shown = opening.astimezone(tz).strftime("%d/%m %H:%M:%S")
-            log(f"Ouverture des inscriptions : {shown} ; en attente, laisser ce terminal ouvert.")
+            log(f"Ouverture des inscriptions : {shown} ; en attente.")
             _sleep_until(opening - REFRESH_BEFORE, server_now, sleep)
             # L'école a pu déplacer l'ouverture depuis le lancement : on relit avant d'agir.
             fresh = {e.event_id: e for e in client.events()}
@@ -129,6 +133,12 @@ def subscribe_at_opening(
                     del pending[event_id]
                 else:
                     pending[event_id] = event
+            if wanted is not None:
+                keep = wanted(set(pending))
+                for event_id in [i for i in pending if i not in keep]:
+                    log(f"{event_id} : pré-inscription annulée, abandon.")
+                    outcome.cancelled.append(event_id)
+                    del pending[event_id]
             if not pending:
                 break
             moved = _next_opening(pending, server_now())
@@ -162,8 +172,10 @@ def subscribe_at_opening(
 
     # Vérification indépendante : la réponse HTTP ne suffit pas à conclure.
     confirmed = {e.event_id for e in client.events() if e.is_participant_subscribed}
-    for event_id in wanted:
+    for event_id in requested:
         if event_id in outcome.already or event_id in outcome.failed:
+            continue
+        if event_id in outcome.cancelled:
             continue
         if event_id in confirmed:
             outcome.subscribed.append(event_id)

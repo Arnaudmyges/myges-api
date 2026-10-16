@@ -8,6 +8,7 @@ valide (~6 jours). Pour un usage non interactif, ``MYGES_USERNAME`` / ``MYGES_PA
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -30,6 +31,7 @@ except ImportError:  # pragma: no cover
 from pydantic import BaseModel
 
 from . import notify, schedule
+from . import pending as pending_mod
 from . import watch as watch_mod
 from ._version import __version__
 from .client import MyGES
@@ -774,7 +776,7 @@ app.add_typer(events_app, name="events")
 
 @events_app.callback(invoke_without_command=True)
 def events(ctx: typer.Context, json_: JsonOpt = False) -> None:
-    """Événements du campus, avec l'ouverture des inscriptions (inscription : `subscribe`)."""
+    """Événements du campus, avec l'ouverture des inscriptions et vos pré-inscriptions."""
     if ctx.invoked_subcommand is not None:
         return
     with _client() as client:
@@ -782,6 +784,7 @@ def events(ctx: typer.Context, json_: JsonOpt = False) -> None:
     if json_:
         return _dump(data)
     now = datetime.now(_TZ)
+    waiting = {p.event_id: p for p in pending_mod.load()}
     upcoming = [e for e in data if e.event_date is None or e.event_date >= now]
     _table(
         "Événements à venir",
@@ -791,9 +794,19 @@ def events(ctx: typer.Context, json_: JsonOpt = False) -> None:
             ("Date", lambda e: _fmt_dt(e.event_date)),
             ("Événement", lambda e: e.event_title),
             ("Inscriptions", lambda e: _subscription_window(e, now)),
-            ("Inscrit", lambda e: "[green]oui[/]" if e.is_participant_subscribed else ""),
+            ("Inscrit", lambda e: _subscription_state(e, waiting.get(e.event_id))),
         ],
     )
+
+
+def _subscription_state(event: Any, waiting: pending_mod.Pending | None) -> str:
+    if event.is_participant_subscribed:
+        return "[green]oui[/]"
+    if waiting is None:
+        return ""
+    if pending_mod.alive(waiting.pid) is False:
+        return "[yellow]⚠ interrompu[/]"
+    return "[cyan]⏳ pré-inscrit[/]"
 
 
 def _subscription_window(event: Any, now: datetime) -> str:
@@ -814,22 +827,63 @@ def events_subscribe(
             help="Identifiant (colonne id) ou adresse myges.fr/common/event/4525.",
         ),
     ],
+    background: Annotated[
+        bool,
+        typer.Option(
+            "--background", "-b", help="Attendre l'ouverture en arrière-plan (rend la main)."
+        ),
+    ] = False,
 ) -> None:
     """S'inscrire, dès l'ouverture des inscriptions si elles ne sont pas encore ouvertes.
 
-    La commande attend l'heure d'ouverture (horloge du serveur), puis réessaie toutes les
-    demi-secondes pendant 3 minutes. Laisser le terminal ouvert (ou utiliser tmux).
+    Attend l'heure d'ouverture de chaque événement (horloge du serveur), puis réessaie
+    toutes les demi-secondes pendant 3 minutes. Avec `-b`, l'attente se fait en arrière-plan :
+    suivre avec `myges events pending`, annuler avec `myges events cancel`. Mise en veille
+    sans effet ; un arrêt de la machine interrompt l'attente.
     """
     from .registration import subscribe_at_opening
 
     event_ids = [_event_id(ref) for ref in events_ref]
+    if background:
+        return _subscribe_in_background(events_ref, event_ids)
+
+    pid = os.getpid()
     with _client(allow_writes=True) as client:
-        outcome = subscribe_at_opening(client, event_ids, log=console.print, tz=_TZ)
-        titles = {e.event_id: e.event_title for e in client.events()}
+        now = datetime.now(_TZ)
+        known = {e.event_id: e for e in client.events()}
+        titles = {i: e.event_title for i, e in known.items()}
+        waiting = [
+            pending_mod.Pending(i, opens.isoformat(), pid, now.isoformat())
+            for i in event_ids
+            if (e := known.get(i)) is not None
+            and not e.is_participant_subscribed
+            and (opens := e.start_subscription_date) is not None
+            and opens > now
+        ]
+        pending_mod.register(waiting)
+        if waiting and not os.environ.get("MYGES_BACKGROUND"):
+            console.print(
+                "[dim]Laisser ce terminal ouvert jusqu'à l'ouverture "
+                "(ou relancer avec -b pour l'arrière-plan).[/]"
+            )
+        try:
+            outcome = subscribe_at_opening(
+                client,
+                event_ids,
+                log=console.print,
+                tz=_TZ,
+                wanted=lambda ids: (
+                    (ids - {w.event_id for w in waiting}) | pending_mod.still_wanted(ids, pid)
+                ),
+            )
+        finally:
+            pending_mod.remove({w.event_id for w in waiting}, pid=pid)
     for event_id in outcome.subscribed:
         console.print(f"[green]Inscrit[/] : {titles.get(event_id, event_id)}")
     for event_id in outcome.already:
         console.print(f"[dim]Déjà inscrit : {titles.get(event_id, event_id)}[/]")
+    for event_id in outcome.cancelled:
+        console.print(f"[dim]Annulé : {titles.get(event_id, event_id)}[/]")
     for event_id, reason in outcome.failed.items():
         err.print(f"[red]Échec[/] {event_id} ({titles.get(event_id, '?')}) : {reason}")
     _log_attempts(outcome)
@@ -839,6 +893,98 @@ def events_subscribe(
         _broadcast("myGES : inscriptions", "\n".join(lines))
     if outcome.failed:
         raise typer.Exit(1)
+
+
+def _subscribe_in_background(refs: list[str], event_ids: list[int]) -> None:
+    """Relance la commande, détachée du terminal, sortie dans le journal d'état."""
+    import subprocess
+    import time
+
+    base = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    log_path = Path(base) / "myges" / "events-background.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    command = [sys.executable, "-m", "myges.cli", "events", "subscribe", *refs]
+    options: dict[str, Any] = {}
+    if sys.platform == "win32":
+        options["creationflags"] = 0x00000008 | 0x00000200  # DETACHED | NEW_PROCESS_GROUP
+    else:
+        options["start_new_session"] = True  # survit à la fermeture du terminal
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(f"--- {datetime.now(_TZ).isoformat()} : {' '.join(refs)}\n")
+        log.flush()
+        child = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+            env={**os.environ, "COLUMNS": "120", "MYGES_BACKGROUND": "1"}, **options,
+        )  # fmt: skip
+    # Attendre que le processus se soit déclaré (ou ait déjà fini : événement ouvert).
+    for _ in range(40):
+        if child.poll() is not None or any(p.pid == child.pid for p in pending_mod.load()):
+            break
+        time.sleep(0.25)
+    if child.poll() not in (None, 0):
+        err.print(f"[red]Échec[/] : voir {log_path}")
+        raise typer.Exit(1)
+    console.print(
+        f"[green]Pré-inscription enregistrée[/] pour {', '.join(map(str, event_ids))} "
+        f"(arrière-plan, pid {child.pid})."
+    )
+    console.print(
+        "[dim]Suivre : `myges events pending` · annuler : `myges events cancel <id>` · "
+        f"journal : {log_path}[/]"
+    )
+
+
+@events_app.command("pending")
+def events_pending() -> None:
+    """Pré-inscriptions en attente de l'ouverture des inscriptions."""
+    entries = pending_mod.load()
+    if not entries:
+        console.print("[dim]Aucune pré-inscription. `myges events subscribe <id> -b`.[/]")
+        return
+    with _client() as client:
+        titles = {e.event_id: e.event_title for e in client.events()}
+    _table(
+        "Pré-inscriptions",
+        sorted(entries, key=lambda p: p.opens),
+        [
+            ("id", lambda p: p.event_id),
+            ("Événement", lambda p: titles.get(p.event_id, "?")),
+            ("Ouverture", lambda p: _fmt_dt(p.opens_at)),
+            (
+                "État",
+                lambda p: (
+                    "[yellow]⚠ interrompu : relancer subscribe[/]"
+                    if pending_mod.alive(p.pid) is False
+                    else "[cyan]⏳ en attente[/]"
+                ),
+            ),
+        ],
+    )
+
+
+@events_app.command("cancel")
+def events_cancel(
+    events_ref: Annotated[
+        list[str], typer.Argument(metavar="ÉVÉNEMENT...", help="Identifiant ou adresse.")
+    ],
+) -> None:
+    """Annuler une pré-inscription (avant l'ouverture). Après : `unsubscribe`."""
+    import signal
+
+    ids = {_event_id(ref) for ref in events_ref}
+    before = pending_mod.load()
+    removed = pending_mod.remove(ids)
+    for event_id in sorted(ids):
+        if event_id in removed:
+            console.print(f"Pré-inscription annulée : {event_id}.")
+        else:
+            err.print(f"[yellow]{event_id} : aucune pré-inscription.[/]")
+    # Un processus d'attente qui n'a plus rien à faire est arrêté tout de suite.
+    remaining = {p.pid for p in pending_mod.load()}
+    for pid in {p.pid for p in before if p.event_id in removed} - remaining:
+        if pid != os.getpid() and pending_mod.alive(pid) and sys.platform != "win32":
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGTERM)
 
 
 def _event_id(ref: str) -> int:
