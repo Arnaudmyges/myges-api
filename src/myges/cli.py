@@ -276,8 +276,15 @@ def login(
             "sans intervention, utile pour `myges watch` en tâche planifiée.",
         ),
     ] = False,
+    no_completion: Annotated[
+        bool,
+        typer.Option("--no-completion", help="Ne pas activer la complétion des commandes (Tab)."),
+    ] = False,
 ) -> None:
-    """Se connecter : le compte est retenu pour les commandes suivantes."""
+    """Se connecter : le compte est retenu pour les commandes suivantes.
+
+    À la première connexion, active aussi la complétion des commandes avec Tab.
+    """
     username = username or typer.prompt("Identifiant myGES", default=_saved_username())
     password = os.environ.get("MYGES_PASSWORD") or typer.prompt("Mot de passe", hide_input=True)
     try:
@@ -295,6 +302,25 @@ def login(
         console.print(
             f"[dim]Mot de passe enregistré dans {_config_path()} (lisible par vous seul).[/]"
         )
+    if not no_completion and not _load_config().get("completion") and _install_completion():
+        config = _load_config()
+        config["completion"] = True
+        _store_config(config)
+        console.print("[dim]Complétion avec Tab activée (dans les nouveaux terminaux).[/]")
+
+
+def _install_completion() -> bool:
+    """Active la complétion Tab du shell courant ; sans bruit si c'est impossible."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "myges.cli", "--install-completion"],
+            capture_output=True, text=True, timeout=20, check=False,
+        )  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 @app.command()
@@ -776,12 +802,26 @@ app.add_typer(events_app, name="events")
 
 
 @events_app.callback(invoke_without_command=True)
-def events(ctx: typer.Context, json_: JsonOpt = False) -> None:
+def events(
+    ctx: typer.Context,
+    inspect: Annotated[
+        str | None,
+        typer.Option(
+            "--inspect",
+            "-i",
+            metavar="ÉVÉNEMENT",
+            help="Détail d'un événement : description, intervenants, salle.",
+        ),
+    ] = None,
+    json_: JsonOpt = False,
+) -> None:
     """Événements du campus, avec l'ouverture des inscriptions et vos pré-inscriptions."""
     if ctx.invoked_subcommand is not None:
         return
     with _client() as client:
         data = client.events()
+    if inspect is not None:
+        return _inspect_event(data, _event_id(inspect), json_)
     if json_:
         return _dump(data)
     now = datetime.now(_TZ)
@@ -798,6 +838,40 @@ def events(ctx: typer.Context, json_: JsonOpt = False) -> None:
             ("Inscrit", lambda e: _subscription_state(e, waiting.get(e.event_id))),
         ],
     )
+
+
+def _html_to_text(fragment: str) -> str:
+    """Description myGES (HTML léger) → texte : un bloc par ligne, entités décodées."""
+    import html
+
+    # Un saut de ligne à l'ouverture d'un bloc (pas à la fermeture) : « </div><div> » ne
+    # double pas l'interligne, et un bloc vide « <div><br></div> » reste une ligne vide.
+    text = re.sub(r"(?i)<br\s*/?>|<(div|p|li)[^>]*>", "\n", fragment)
+    text = html.unescape(re.sub(r"<[^>]+>", "", text)).replace("\xa0", " ")
+    lines = [line.strip() for line in text.splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _inspect_event(data: list[Any], event_id: int, json_: bool) -> None:
+    event = next((e for e in data if e.event_id == event_id), None)
+    if event is None:
+        err.print(f"[red]Événement {event_id} introuvable.[/] Voir `myges events`.")
+        raise typer.Exit(2)
+    if json_:
+        return _dump(event)
+    now = datetime.now(_TZ)
+    waiting = {p.event_id: p for p in pending_mod.load()}.get(event_id)
+    console.print(f"[bold]{event.event_title}[/]")
+    console.print(
+        f"{_fmt_dt(event.event_date)} · {event.location or '—'} · organisé par "
+        f"{event.organizer or '—'}"
+    )
+    state = _subscription_state(event, waiting) or "non inscrit"
+    console.print(f"Inscriptions : {_subscription_window(event, now)} · {state}")
+    if event.description:
+        console.print()
+        console.print(_html_to_text(event.description))
+    console.print(f"\n[dim]https://myges.fr/common/event/{event_id}[/]")
 
 
 def _subscription_state(event: Any, waiting: pending_mod.Pending | None) -> str:
@@ -1161,6 +1235,41 @@ def blocs_show(
         "[dim]* simulée · ~ provisoire (contrôle continu, pas de moyenne officielle) · "
         "¹ coefficient non publié, compté 1[/]"
     )
+
+
+@blocs_app.command("setup")
+def blocs_setup(year: YearOpt = None) -> None:
+    """Ranger chaque matière dans son bloc, une par une (à faire une fois par année).
+
+    Pour chaque matière : taper le bloc (`1` donne « Bloc 1 », ou un nom libre), Entrée pour
+    garder la valeur actuelle, `-` pour la laisser hors bloc.
+    """
+    with _client() as client:
+        y = _year_of(client, year)
+        catalog = _Courses(client, y)
+    current = {rc: name for name, members in _stored_blocs(y).items() for rc in members}
+    console.print(
+        f"[bold]{len(catalog.items)} matières[/] ({y}-{y + 1}). Bloc : `1` → « Bloc 1 », "
+        "Entrée = inchangé, `-` = hors bloc.\n"
+    )
+    chosen: dict[int, str | None] = {}
+    for course in catalog.items:
+        default = current.get(course.rc_id, "-")
+        answer = typer.prompt(
+            f"{catalog.number(course.rc_id):>3}  {course.name}", default=default
+        ).strip()
+        if answer in ("", "-"):
+            chosen[course.rc_id] = None
+        else:
+            chosen[course.rc_id] = f"Bloc {answer}" if answer.isdigit() else answer
+    blocs: dict[str, list[int]] = {}
+    for course in catalog.items:  # ordre des matières conservé dans chaque bloc
+        name = chosen[course.rc_id]
+        if name is not None:
+            blocs.setdefault(name, []).append(course.rc_id)
+    _save_blocs(y, dict(sorted(blocs.items())))
+    summary = ", ".join(f"{name} ({len(members)})" for name, members in sorted(blocs.items()))
+    console.print(f"\n[green]Blocs enregistrés[/] : {summary or 'aucun'}. Voir `myges blocs`.")
 
 
 @blocs_app.command("add")

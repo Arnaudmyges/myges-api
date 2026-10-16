@@ -429,3 +429,16 @@ def test_events_opening_together_are_tried_together() -> None:
         outcome, _ = school.run(router, 4501, 4502)
     assert sorted(outcome.subscribed) == [4501, 4502]
     assert school.attempts[4501][0] == school.attempts[4502][0]  # même salve
+
+
+def test_event_description_html_to_text() -> None:
+    from myges.cli import _html_to_text
+
+    raw = (
+        "L’IA agentique<div>Intervenants :&nbsp;</div><div>Simon Eterno - leader</div>"
+        "<div>Julianne Cerdan</div><div><br></div><div>Nation 1 Salle A07</div>"
+    )
+    assert _html_to_text(raw) == (
+        "L’IA agentique\nIntervenants :\nSimon Eterno - leader\nJulianne Cerdan\n\n"
+        "Nation 1 Salle A07"
+    )

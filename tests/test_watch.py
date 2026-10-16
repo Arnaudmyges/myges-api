@@ -256,7 +256,7 @@ def test_login_save_password(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         result = CliRunner().invoke(app, ["login", "--save-password"], input="jdupont\nsecret\n")
     assert result.exit_code == 0, result.output
     config = json.loads((tmp_path / "c" / "myges" / "config.json").read_text())
-    assert config == {"username": "jdupont", "password": "secret"}
+    assert (config["username"], config["password"]) == ("jdupont", "secret")
     assert CliRunner().invoke(app, ["logout"]).exit_code == 0
     assert "password" not in json.loads((tmp_path / "c" / "myges" / "config.json").read_text())
 

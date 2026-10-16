@@ -48,6 +48,12 @@ class FakeSystem:
 
 
 @pytest.fixture(autouse=True)
+def no_shell_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """La complétion n'est jamais installée dans le vrai shell de la machine de test."""
+    monkeypatch.setattr("myges.cli._install_completion", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def fake_system(monkeypatch: pytest.MonkeyPatch) -> FakeSystem:
     system = FakeSystem()
     monkeypatch.setattr("myges.schedule._run", system.run)

@@ -45,9 +45,8 @@ myges --version
 
 ## Complétion avec Tab
 
-```bash
-myges --install-completion     # bash, zsh, fish, PowerShell ; puis nouveau terminal
-```
+Activée automatiquement au premier `myges login` (effective dans les nouveaux terminaux).
+Pour la refaire à la main : `myges --install-completion`.
 
 ## WSL : retrouver les supports dans l'Explorateur Windows
 

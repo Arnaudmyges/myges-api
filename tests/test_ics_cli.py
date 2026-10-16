@@ -280,3 +280,14 @@ def test_cli_version() -> None:
     result = CliRunner().invoke(app, ["--version"])
     assert result.exit_code == 0
     assert result.output.startswith("myges-api ")
+
+
+def test_completion_installs_into_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from myges import cli
+
+    monkeypatch.undo()  # la vraie fonction, mais dans un HOME temporaire
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    assert cli._install_completion() is True
+    assert (tmp_path / ".bash_completions" / "myges.sh").exists()
+    assert "myges.sh" in (tmp_path / ".bashrc").read_text()

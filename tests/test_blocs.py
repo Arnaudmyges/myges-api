@@ -119,3 +119,18 @@ def test_cli_rejects_bad_simulation(cli_env: Path, raw: str) -> None:
         mock(router)
         result = CliRunner().invoke(app, ["blocs", "-s", raw])
     assert result.exit_code == 2
+
+
+def test_cli_blocs_setup_wizard(cli_env: Path) -> None:
+    # Ordre affiché : #1 Anglais (500002), #2 Réseaux avancés (500001).
+    with respx.mock(assert_all_called=False) as router:
+        mock(router)
+        first = CliRunner().invoke(app, ["blocs", "setup"], input="2\n1\n")
+        assert first.exit_code == 0, first.output
+        stored = json.loads((cli_env / "myges" / "config.json").read_text())
+        assert stored["blocs"]["2026"] == {"Bloc 1": [500001], "Bloc 2": [500002]}
+        # Entrée garde la valeur actuelle ; « - » sort la matière de tout bloc.
+        second = CliRunner().invoke(app, ["blocs", "setup"], input="-\n\n")
+        assert second.exit_code == 0, second.output
+    stored = json.loads((cli_env / "myges" / "config.json").read_text())
+    assert stored["blocs"]["2026"] == {"Bloc 1": [500001]}
