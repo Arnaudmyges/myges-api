@@ -113,6 +113,12 @@ Puis le lancer régulièrement, par exemple toutes les 30 minutes (`crontab -e`)
 Les notes et absences sont des données personnelles : garder un sujet ntfy aléatoire et un
 salon Discord privé.
 
+## Google Agenda
+
+`myges gcal sync` tient un agenda Google dédié à jour avec l'emploi du temps (cours ajoutés,
+déplacés, annulés), sans intervention. Configuration en ~10 minutes :
+[docs/google-calendar.md](docs/google-calendar.md).
+
 ## Bibliothèque
 
 ```python

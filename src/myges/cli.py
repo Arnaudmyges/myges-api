@@ -1042,6 +1042,93 @@ def notify_test() -> None:
     console.print(f"[green]Message de test envoyé à {len(_channels())} canal(aux).[/]")
 
 
+# ---------------------------------------------------------------- Google Agenda
+
+gcal_app = typer.Typer(
+    help="Synchroniser l'agenda myGES vers un agenda Google dédié.", no_args_is_help=True
+)
+app.add_typer(gcal_app, name="gcal")
+
+
+def _gcal_settings() -> tuple[Path, str]:
+    settings = _load_config().get("gcal") or {}
+    if not settings.get("calendar_id"):
+        err.print("[red]Google Agenda non configuré.[/] Voir `myges gcal setup --help`.")
+        raise typer.Exit(2)
+    return Path(settings["key_file"]), str(settings["calendar_id"])
+
+
+@gcal_app.command("setup")
+def gcal_setup(
+    key_file: Annotated[Path, typer.Argument(help="Clé JSON du compte de service Google.")],
+    calendar_id: Annotated[
+        str, typer.Argument(help="ID de l'agenda (Paramètres de l'agenda > Intégrer l'agenda).")
+    ],
+) -> None:
+    """Configurer la synchro (une fois). Guide pas à pas : docs/google-calendar.md du dépôt.
+
+    1. Google Cloud : activer l'API Google Calendar, créer un compte de service et une clé JSON.
+    2. Google Agenda : créer un agenda dédié, le partager avec l'adresse du compte de
+       service, droit « Apporter des modifications aux événements ».
+    3. `myges gcal setup cle.json <id>@group.calendar.google.com`
+    """
+    from .gcal import GoogleCalendar, GoogleCalendarError
+
+    source = key_file.expanduser()
+    dest = _config_path().parent / "gcal-service-account.json"
+    try:
+        with GoogleCalendar(source, calendar_id) as calendar:
+            calendar.check_access()
+            email = calendar.service_account_email
+    except (GoogleCalendarError, OSError, ValueError) as exc:
+        err.print(f"[red]Échec :[/] {exc}")
+        raise typer.Exit(1) from exc
+    dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(source.read_bytes())
+    config = _load_config()
+    config["gcal"] = {"calendar_id": calendar_id, "key_file": str(dest)}
+    _store_config(config)
+    console.print(f"[green]Agenda accessible[/] via {email}. Clé copiée dans {dest} (0600).")
+    console.print("Lancer `myges gcal sync` (puis le planifier, voir le README).")
+
+
+@gcal_app.command("sync")
+def gcal_sync(
+    days: Annotated[int, typer.Option(help="Fenêtre synchronisée, en jours.")] = 30,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Afficher sans rien modifier.")
+    ] = False,
+    quiet: Annotated[
+        bool, typer.Option("--quiet", "-q", help="N'afficher que les modifications.")
+    ] = False,
+) -> None:
+    """Créer, mettre à jour et supprimer les cours dans l'agenda Google.
+
+    Seuls les événements créés par cette commande sont touchés ; un cours annulé côté
+    myGES disparaît de l'agenda.
+    """
+    from .gcal import GoogleCalendar, GoogleCalendarError, sync
+
+    key_file, calendar_id = _gcal_settings()
+    now = datetime.now(_TZ)
+    with _client() as client:
+        events = client.agenda(now - timedelta(days=1), now + timedelta(days=days))
+    try:
+        with GoogleCalendar(key_file, calendar_id) as calendar:
+            report = sync(calendar, events, now, days, dry_run=dry_run)
+    except GoogleCalendarError as exc:
+        err.print(f"[red]Échec :[/] {exc}")
+        raise typer.Exit(1) from exc
+    for line in report.created_or_updated:
+        console.print(f"[green]+[/] {line}")
+    for line in report.deleted:
+        console.print(f"[red]−[/] {line}")
+    if not quiet or report.created_or_updated or report.deleted:
+        console.print(report.summary + (" [dim](simulation)[/]" if dry_run else ""))
+
+
 # ---------------------------------------------------------------- Exploration
 
 

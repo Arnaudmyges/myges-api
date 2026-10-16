@@ -28,6 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cli = ["typer>=0.12", "rich>=13"]
+gcal = ["google-auth>=2.20"]
 
 [project.scripts]
 myges = "myges.cli:main"
@@ -38,7 +39,7 @@ Source = "https://github.com/Arnaudmyges/myges-api"
 
 [dependency-groups]
 dev = [
-    "myges-api[cli]",
+    "myges-api[cli,gcal]",
     "pytest>=8",
     "respx>=0.21",
     "anyio>=4",
@@ -80,3 +81,8 @@ strict = true
 python_version = "3.10"
 files = ["src"]
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# google-auth n'annote pas toutes ses fonctions.
+module = ["myges.gcal"]
+disallow_untyped_calls = false
