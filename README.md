@@ -88,6 +88,20 @@ Une matière se désigne par son numéro `#` (affiché dans `courses`, `grades`,
 `myges --help` liste toutes les commandes, et `--json` donne la sortie brute de chacune.
 La session dure ~6 jours ; ensuite, relancer `myges login`.
 
+## Blocs et simulation de notes
+
+myGES ne fournit pas les blocs de compétences : on les définit une fois, puis la CLI calcule
+la moyenne de chaque bloc et la moyenne générale, avec des notes hypothétiques si besoin.
+
+```bash
+myges blocs add "Bloc 1" 1 3 anglais      # matières par numéro, nom ou rc_id
+myges blocs                               # moyenne par bloc (validé si ≥ 10) et générale
+myges blocs -s 3=15 -s anglais=12         # et si j'avais 15 en #3 ?
+myges blocs remove "Bloc 1" 3             # retirer une matière (ou tout le bloc)
+```
+
+Pondération : coefficient de la matière, ou 1 tant qu'il n'est pas publié (signalé).
+
 ## Alertes : nouvelles notes, supports, cours annulés
 
 `myges watch` signale ce qui a changé depuis son dernier passage (notes, absences, supports

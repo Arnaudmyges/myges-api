@@ -803,6 +803,162 @@ def campus(json_: JsonOpt = False) -> None:
     )
 
 
+# ---------------------------------------------------------------- Blocs
+
+blocs_app = typer.Typer(
+    help="Blocs de compétences : moyennes par bloc et simulation de notes.",
+)
+app.add_typer(blocs_app, name="blocs")
+
+
+def _year_of(client: MyGES, year: int | None) -> int:
+    return year if year is not None else max(client.years())
+
+
+def _stored_blocs(year: int) -> dict[str, list[int]]:
+    blocs = (_load_config().get("blocs") or {}).get(str(year)) or {}
+    return {str(k): [int(x) for x in v] for k, v in blocs.items()}
+
+
+def _save_blocs(year: int, blocs: dict[str, list[int]]) -> None:
+    config = _load_config()
+    every = config.get("blocs") or {}
+    if blocs:
+        every[str(year)] = blocs
+    else:
+        every.pop(str(year), None)
+    config["blocs"] = every
+    _store_config(config)
+
+
+def _parse_simulation(raw: str, catalog: _Courses) -> tuple[int, float]:
+    ref, sep, value = raw.rpartition("=")
+    try:
+        grade = float(value.replace(",", "."))
+    except ValueError:
+        grade = -1.0
+    if not sep or not ref or not 0 <= grade <= 20:
+        err.print(f"[red]Simulation invalide : « {raw} ».[/] Format : MATIÈRE=NOTE, ex. 3=14.5")
+        raise typer.Exit(2)
+    rc_id, _ = catalog.resolve(ref)
+    return rc_id, grade
+
+
+def _fmt_avg(value: float | None) -> str:
+    return "—" if value is None else f"{value:.2f}"
+
+
+@blocs_app.callback(invoke_without_command=True)
+def blocs_show(
+    ctx: typer.Context,
+    simulate: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--simulate",
+            "-s",
+            help="Note hypothétique MATIÈRE=NOTE (répétable), ex. -s 3=15 -s anglais=12.",
+        ),
+    ] = None,
+    year: YearOpt = None,
+) -> None:
+    """Moyenne de chaque bloc et moyenne générale, avec simulation possible.
+
+    Définir les blocs avec `myges blocs add`. Pondération : coefficient de la matière,
+    ou 1 s'il n'est pas encore publié. Bloc validé si sa moyenne est ≥ 10.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    from .blocs import compute, overall
+
+    with _client() as client:
+        y = _year_of(client, year)
+        catalog = _Courses(client, y)
+        simulated = dict(_parse_simulation(raw, catalog) for raw in simulate or [])
+        grades = client.grades(y)
+    blocs = _stored_blocs(y)
+    results, others = compute(catalog.items, grades, blocs, simulated)
+    if not blocs:
+        console.print(
+            "[dim]Aucun bloc défini pour cette année : toutes les matières sont « hors bloc ». "
+            'Exemple : myges blocs add "Bloc 1" 1 3 anglais[/]'
+        )
+    marks = {"simulée": " *", "provisoire": " ~", "officielle": "", "aucune": ""}
+    for result in [*results, *([others] if others.lines else [])]:
+        verdict = {True: "[green]validé[/]", False: "[red]non validé[/]", None: "[dim]—[/]"}
+        title = f"{result.name} : moyenne {_fmt_avg(result.average)}"
+        if result is not others:
+            title += f"  {verdict[result.validated]}"
+        _table(
+            title,
+            result.lines,
+            [
+                ("#", lambda line: catalog.number(line.rc_id)),
+                ("Matière", lambda line: line.name),
+                (
+                    "Coef",
+                    lambda line: f"{line.weight:g}" + ("" if line.official_weight else " ¹"),
+                ),
+                ("Moyenne", lambda line: _fmt_avg(line.average) + marks[line.source]),
+            ],
+        )
+    console.print(f"[bold]Moyenne générale : {_fmt_avg(overall(results, others))}[/]")
+    console.print(
+        "[dim]* simulée · ~ provisoire (contrôle continu, pas de moyenne officielle) · "
+        "¹ coefficient non publié, compté 1[/]"
+    )
+
+
+@blocs_app.command("add")
+def blocs_add(
+    name: Annotated[str, typer.Argument(help='Nom du bloc, ex. "Bloc 1".')],
+    courses: Annotated[
+        list[str], typer.Argument(help="Matières : numéro, partie du nom ou rc_id.")
+    ],
+    year: YearOpt = None,
+) -> None:
+    """Ajouter des matières à un bloc (créé s'il n'existe pas)."""
+    with _client() as client:
+        y = _year_of(client, year)
+        catalog = _Courses(client, y)
+        resolved = [catalog.resolve(ref) for ref in courses]
+    blocs = _stored_blocs(y)
+    for rc_id, _ in resolved:  # une matière n'appartient qu'à un bloc
+        for members in blocs.values():
+            if rc_id in members:
+                members.remove(rc_id)
+    blocs.setdefault(name, [])
+    blocs[name] += [rc_id for rc_id, _ in resolved if rc_id not in blocs[name]]
+    _save_blocs(y, {k: v for k, v in blocs.items() if v})
+    for _, course_name in resolved:
+        console.print(f"[green]+[/] {course_name} → {name}")
+
+
+@blocs_app.command("remove")
+def blocs_remove(
+    name: Annotated[str, typer.Argument(help="Nom du bloc.")],
+    courses: Annotated[
+        list[str] | None,
+        typer.Argument(help="Matières à retirer (défaut : supprimer tout le bloc)."),
+    ] = None,
+    year: YearOpt = None,
+) -> None:
+    """Retirer des matières d'un bloc, ou supprimer le bloc."""
+    with _client() as client:
+        y = _year_of(client, year)
+        catalog = _Courses(client, y)
+        resolved = [catalog.resolve(ref) for ref in courses or []]
+    blocs = _stored_blocs(y)
+    if name not in blocs:
+        err.print(f"[red]Bloc inconnu : « {name} ».[/] Blocs : {', '.join(blocs) or 'aucun'}.")
+        raise typer.Exit(2)
+    if resolved:
+        blocs[name] = [rc for rc in blocs[name] if rc not in {r for r, _ in resolved}]
+    else:
+        blocs[name] = []
+    _save_blocs(y, {k: v for k, v in blocs.items() if v})
+    console.print(f"Bloc « {name} » mis à jour." if blocs[name] else f"Bloc « {name} » supprimé.")
+
+
 # ---------------------------------------------------------------- Alertes
 
 
