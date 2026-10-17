@@ -47,8 +47,9 @@ myges --version
 dans les tâches planifiées) ; `MYGES_NO_UPDATE_CHECK=1` pour s'en passer.
 
 **`pipx upgrade` répond « already at latest version » alors qu'une version plus récente
-est sur PyPI ?** pip garde la liste des versions en cache 10 minutes : juste après une
-publication, il ne la voit pas encore. Attendre 10 minutes, ou :
+est sur PyPI ?** Juste après une publication, la liste des versions met jusqu'à
+10 minutes à se mettre à jour (cache de pip, et parfois de PyPI lui-même). Réessayer un
+peu plus tard ; `--pip-args=--no-cache-dir` écarte au moins le cache local :
 
 ```bash
 pipx upgrade --pip-args=--no-cache-dir myges-api
