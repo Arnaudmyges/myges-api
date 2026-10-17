@@ -2,8 +2,10 @@
 
 « Quelle est ma moyenne ? », « dans quelle salle est le cours de Python ? », « écris au
 prof que j'ai oublié de signer Edusign à 9 h » : l'assistant appelle ces outils et
-répond. Tout est en lecture seule, sauf ``draft_email`` qui ouvre un *brouillon* dans
-Outlook : l'envoi reste un clic de l'utilisateur.
+répond. La plupart des outils sont en lecture seule. ``draft_email`` ouvre un
+*brouillon* dans Outlook (l'envoi reste un clic de l'utilisateur) ; les téléchargements
+écrivent sur la machine ; seuls ``subscribe_event`` et ``unsubscribe_event`` modifient le
+compte myGES, et passent par la CLI (mêmes garde-fous que dans le terminal).
 
 Le serveur s'appuie sur la session de ``myges login`` (même compte, même jeton). Il ne
 renvoie que ce qu'une question demande : pas d'adresse postale, de date de naissance ni
