@@ -29,6 +29,7 @@ dependencies = [
 [project.optional-dependencies]
 cli = ["typer>=0.12", "rich>=13"]
 gcal = ["google-auth>=2.20"]
+mcp = ["myges-api[cli]", "mcp>=2.3,<3"]
 
 [project.scripts]
 myges = "myges.cli:main"
@@ -40,7 +41,7 @@ Source = "https://github.com/Arnaudmyges/myges-api"
 
 [dependency-groups]
 dev = [
-    "myges-api[cli,gcal]",
+    "myges-api[cli,gcal,mcp]",
     "pytest>=8",
     "respx>=0.21",
     "anyio>=4",

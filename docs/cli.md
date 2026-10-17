@@ -132,6 +132,11 @@ le lien est affiché, à ouvrir sur une machine qui en a un.
   récapitulatif (`myges summary`), bouton « S'inscrire » (`myges notify serve`)
 - [Google Calendar](google-calendar.md) : `myges gcal …`
 
+## Assistant
+
+- [Assistant (MCP)](assistant.md) : `myges mcp` pour poser ses questions à Claude,
+  `myges mcp --install` pour l'ajouter à Claude Code
+
 ## Exploration de l'API
 
 ```bash

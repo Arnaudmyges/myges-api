@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 try:
     import typer
     from rich.console import Console
+    from rich.markup import escape
     from rich.table import Table
 except ImportError:  # pragma: no cover
     sys.exit("La CLI nécessite l'extra « cli » : pip install 'myges-api[cli]'")
@@ -180,7 +181,7 @@ def _client(password: str | None = None, *, allow_writes: bool = False) -> Itera
         ) as client:
             yield client
     except MyGESError as exc:
-        err.print(f"[red]Erreur :[/] {exc}")
+        err.print(f"[red]Erreur :[/] {escape(str(exc))}")
         raise typer.Exit(1) from exc
 
 
@@ -314,7 +315,7 @@ def login(
         with MyGES(username, password) as client:
             token = client.login()
     except MyGESError as exc:
-        err.print(f"[red]Échec :[/] {exc}")
+        err.print(f"[red]Échec :[/] {escape(str(exc))}")
         raise typer.Exit(1) from exc
     _save_username(username, password if save_password else None)
     console.print(
@@ -1704,7 +1705,7 @@ def _broadcast(title: str, body: str) -> int:
             notify.send(channel, title, body)
         except Exception as exc:  # un canal en panne ne doit pas bloquer les autres
             failures += 1
-            err.print(f"[red]Échec d'envoi[/] ({notify.describe(channel)}) : {exc}")
+            err.print(f"[red]Échec d'envoi[/] ({notify.describe(channel)}) : {escape(str(exc))}")
     return failures
 
 
@@ -1835,7 +1836,10 @@ def _deliver(state: dict[str, Any], changes: list[watch_mod.Change]) -> int:
         except Exception as exc:  # un canal en panne ne doit pas bloquer les autres
             failures += 1
             outbox[key] = queued
-            err.print(f"[red]Échec d'envoi[/] ({key}) : {exc} — nouvel essai au prochain passage")
+            err.print(
+                f"[red]Échec d'envoi[/] ({key}) : {escape(str(exc))} — "
+                "nouvel essai au prochain passage"
+            )
         else:
             outbox.pop(key, None)
     known = {notify.describe(c) for c in _channels()}
@@ -1971,7 +1975,7 @@ def _watch_pass(username: str, path: Path, *, quiet: bool, no_notify: bool) -> N
         _offline(state, now, type(exc).__name__, notify_on=not no_notify)
         _write_state(path, state)
         _log(username, f"échec : {exc}")
-        err.print(f"[red]Erreur :[/] {exc}")
+        err.print(f"[red]Erreur :[/] {escape(str(exc))}")
         raise typer.Exit(1) from exc
 
     state["expired_notified"] = False
@@ -2069,7 +2073,7 @@ def _watch_install(every: int) -> None:
     try:
         done = schedule.install(every)
     except schedule.ScheduleError as exc:
-        err.print(f"[red]Échec :[/] {exc}")
+        err.print(f"[red]Échec :[/] {escape(str(exc))}")
         raise typer.Exit(1) from exc
     console.print(f"[green]Alertes automatiques activées[/] ({done}).")
     # Ce qui empêcherait les alertes d'arriver, avec la solution.
@@ -2099,7 +2103,7 @@ def _watch_uninstall() -> None:
     try:
         removed = schedule.uninstall()
     except schedule.ScheduleError as exc:
-        err.print(f"[red]Échec :[/] {exc}")
+        err.print(f"[red]Échec :[/] {escape(str(exc))}")
         raise typer.Exit(1) from exc
     console.print("Alertes automatiques désactivées." if removed else "[dim]Rien à désactiver.[/]")
 
@@ -2296,7 +2300,7 @@ def gcal_setup(
             calendar.check_access()
             email = calendar.service_account_email
     except (GoogleCalendarError, OSError, ValueError) as exc:
-        err.print(f"[red]Échec :[/] {exc}")
+        err.print(f"[red]Échec :[/] {escape(str(exc))}")
         raise typer.Exit(1) from exc
     dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -2334,7 +2338,7 @@ def gcal_sync(
         with GoogleCalendar(key_file, calendar_id) as calendar:
             report = sync(calendar, events, now, days, dry_run=dry_run)
     except GoogleCalendarError as exc:
-        err.print(f"[red]Échec :[/] {exc}")
+        err.print(f"[red]Échec :[/] {escape(str(exc))}")
         raise typer.Exit(1) from exc
     for line in report.created_or_updated:
         console.print(f"[green]+[/] {line}")
@@ -2488,7 +2492,7 @@ def summary(
         try:
             removed = schedule.uninstall_weekly_summary()
         except schedule.ScheduleError as exc:
-            err.print(f"[red]Échec :[/] {exc}")
+            err.print(f"[red]Échec :[/] {escape(str(exc))}")
             raise typer.Exit(1) from exc
         console.print("Récapitulatif automatique arrêté." if removed else "[dim]Rien à arrêter.[/]")
         return
@@ -2496,7 +2500,7 @@ def summary(
         try:
             when = schedule.install_weekly_summary(install)
         except schedule.ScheduleError as exc:
-            err.print(f"[red]Échec :[/] {exc}")
+            err.print(f"[red]Échec :[/] {escape(str(exc))}")
             raise typer.Exit(1) from exc
         console.print(f"[green]Récapitulatif envoyé {when}[/] sur vos canaux d'alerte.")
         if not _channels():
@@ -2566,7 +2570,7 @@ def serve(
         server = make_server(host, int(port), settings["token"], on_subscribe)
     except OSError as exc:
         # Avant tout enregistrement : une adresse fautive n'écrase pas celle qui marchait.
-        err.print(f"[red]Impossible d'écouter sur {listen} :[/] {exc}")
+        err.print(f"[red]Impossible d'écouter sur {listen} :[/] {escape(str(exc))}")
         raise typer.Exit(1) from exc
     config["serve"] = settings
     _store_config(config)
@@ -2582,6 +2586,61 @@ def serve(
 notify_app.command("serve")(serve)
 # Ancien nom (avant 0.5), gardé pour les services systemd déjà installés.
 app.command("serve", hidden=True)(serve)
+
+
+# ---------------------------------------------------------------- Assistant (MCP)
+
+MCP_INSTALL = 'pipx install --force "myges-api[cli,mcp]"'
+
+
+@app.command("mcp")
+def mcp_command(
+    install: Annotated[
+        bool,
+        typer.Option("--install", help="Déclarer le serveur dans Claude Code (tous les dossiers)."),
+    ] = False,
+) -> None:
+    """Serveur MCP : demander à Claude « ma moyenne ? », « quelle salle pour Python ? »,
+    « écris au prof que j'ai oublié Edusign »…
+
+    Lancé par le client MCP (Claude Code, Claude Desktop…), pas à la main. Même compte
+    que `myges login`. Lecture seule, sauf les brouillons d'e-mail (jamais envoyés).
+    """
+    import shutil
+    import subprocess
+
+    try:
+        import mcp  # noqa: F401
+    except ImportError:
+        err.print(f"[red]Le module MCP n'est pas installé.[/] Installer : {escape(MCP_INSTALL)}")
+        raise typer.Exit(1) from None
+    if not install:
+        from .mcp_server import main as serve_mcp
+
+        serve_mcp()
+        return
+    exe = shutil.which("myges") or str(Path(sys.argv[0]).resolve())
+    claude = shutil.which("claude")
+    if claude is None:
+        console.print(
+            "Claude Code introuvable. Pour un autre client MCP (Claude Desktop…), ajouter :"
+        )
+        snippet = {"mcpServers": {"myges": {"command": exe, "args": ["mcp"]}}}
+        console.print(json.dumps(snippet, indent=2), highlight=False, soft_wrap=True)
+        return
+    subprocess.run([claude, "mcp", "remove", "-s", "user", "myges"], capture_output=True)
+    added = subprocess.run(
+        [claude, "mcp", "add", "-s", "user", "myges", "--", exe, "mcp"],
+        capture_output=True,
+        text=True,
+    )
+    if added.returncode != 0:
+        err.print(f"[red]Échec :[/] {added.stderr.strip() or added.stdout.strip()}")
+        raise typer.Exit(1)
+    console.print(
+        "[green]Serveur MCP « myges » ajouté à Claude Code.[/] Dans une nouvelle session : "
+        "« quelle est ma moyenne ? »"
+    )
 
 
 # ---------------------------------------------------------------- Exploration

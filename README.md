@@ -48,6 +48,12 @@ Toutes les commandes : [docs/cli.md](https://github.com/Arnaudmyges/myges-api/bl
 Une nouvelle note, un nouveau support, un cours annulé ? Reçois-le sur ton téléphone, Discord
 ou par e-mail : [alertes](https://github.com/Arnaudmyges/myges-api/blob/main/docs/alertes.md).
 
+## Assistant (Claude)
+
+« Quelle est ma moyenne ? », « En quelle salle est mon cours de Python ? », « Écris au prof
+que j'ai oublié Edusign » : pose tes questions à Claude grâce au serveur MCP,
+[assistant](https://github.com/Arnaudmyges/myges-api/blob/main/docs/assistant.md).
+
 ## Google Calendar
 
 Ton emploi du temps dans Google Calendar, toujours à jour : [synchro Google Calendar](https://github.com/Arnaudmyges/myges-api/blob/main/docs/google-calendar.md).

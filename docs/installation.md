@@ -46,8 +46,19 @@ myges --version
 `myges` signale lui-même une nouvelle version (vérifié une fois par jour sur PyPI, jamais
 dans les tâches planifiées) ; `MYGES_NO_UPDATE_CHECK=1` pour s'en passer.
 
-Installé avant la publication sur PyPI (depuis l'adresse GitHub) ? Une seule fois :
-`pipx install --force "myges-api[cli]"`, puis `pipx upgrade` suffit.
+**`pipx upgrade` répond « already at latest version » avec une ancienne version ?**
+pipx réinstalle depuis la source d'origine : une installation faite depuis GitHub, un
+zip ou avec une version fixée (`myges-api==0.4.1`) reste bloquée. Réinstaller une fois
+depuis PyPI, sans version ; ensuite `pipx upgrade` suffit :
+
+```bash
+deactivate 2>/dev/null                       # si un environnement virtuel est activé
+pipx install --force "myges-api[cli]"        # ou "myges-api[cli,mcp]" pour l'assistant
+myges --version
+```
+
+Pour voir la source d'origine : `grep package_or_url
+~/.local/share/pipx/venvs/myges-api/pipx_metadata.json`.
 
 ## Complétion avec Tab
 
