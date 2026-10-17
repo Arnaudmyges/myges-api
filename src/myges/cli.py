@@ -2547,8 +2547,6 @@ def serve(
     settings = config.get("serve") or {}
     settings["url"] = public_url or f"http://{listen}"
     settings.setdefault("token", secrets.token_urlsafe(24))
-    config["serve"] = settings
-    _store_config(config)
 
     def on_subscribe(event_id: int) -> str:
         with _client() as client:
@@ -2564,7 +2562,14 @@ def serve(
         return f"pré-inscription lancée : {event.event_title}"
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    server = make_server(host, int(port), settings["token"], on_subscribe)
+    try:
+        server = make_server(host, int(port), settings["token"], on_subscribe)
+    except OSError as exc:
+        # Avant tout enregistrement : une adresse fautive n'écrase pas celle qui marchait.
+        err.print(f"[red]Impossible d'écouter sur {listen} :[/] {exc}")
+        raise typer.Exit(1) from exc
+    config["serve"] = settings
+    _store_config(config)
     console.print(f"Boutons « S'inscrire » actifs : {settings['url']} (Ctrl+C pour arrêter)")
     try:
         server.serve_forever()

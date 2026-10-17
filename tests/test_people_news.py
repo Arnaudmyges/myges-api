@@ -219,3 +219,14 @@ def test_notify_list_shows_buttons(home: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "http://100.64.0.1:2587" in result.output
     assert "token" not in result.output
+
+
+def test_serve_bad_address_keeps_previous_config(home: Path) -> None:
+    path = home / "xdg_config_home" / "myges" / "config.json"
+    config = json.loads(path.read_text())
+    config["serve"] = {"url": "http://100.64.0.1:2587", "token": "t"}
+    path.write_text(json.dumps(config))
+    result = runner.invoke(app, ["notify", "serve", "--listen", "@TAILNET_IP@:2587"])
+    assert result.exit_code == 1
+    assert "Impossible d'écouter" in result.output
+    assert json.loads(path.read_text())["serve"] == {"url": "http://100.64.0.1:2587", "token": "t"}
