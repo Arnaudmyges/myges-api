@@ -75,16 +75,19 @@ inscrit, nouvelles notes et nouveaux supports de la semaine.
 
 `myges watch` signale chaque nouvel événement publié sur myGES, avec sa date et l'ouverture
 des inscriptions. Sur ntfy, la notification porte un bouton **Voir sur myGES**, et, si
-`myges serve` tourne sur la même machine que `myges watch`, un bouton **S'inscrire** qui
+`myges notify serve` tourne sur la même machine que `myges watch`, un bouton **S'inscrire** qui
 lance la pré-inscription (inscription dès l'ouverture).
 
 ```bash
-myges serve --listen 100.x.x.x:2587   # adresse privée (tailnet, réseau local) uniquement
+myges notify serve --listen 100.x.x.x:2587   # adresse privée (tailnet, réseau local) uniquement
 ```
 
 Le téléphone doit pouvoir joindre cette adresse (Tailscale actif). Chaque bouton porte un
 jeton : seuls ceux qui lisent vos notifications peuvent s'en servir, et le serveur ne sait
 faire qu'une chose, lancer une pré-inscription.
+
+`myges notify list` affiche l'adresse des boutons, `myges notify test` vérifie qu'elle
+répond. (Avant 0.5, la commande s'appelait `myges serve` : ce nom marche toujours.)
 
 ## Si un envoi échoue
 

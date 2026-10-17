@@ -37,6 +37,7 @@ myges next                   # ton prochain cours, salle, prof
 myges agenda                 # la semaine
 myges grades                 # tes notes
 myges files --download       # tous les supports de cours, rangés par matière
+myges teachers --mail python # écrire à ton prof de Python (brouillon Outlook)
 myges --help                 # tout le reste
 ```
 

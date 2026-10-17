@@ -9,6 +9,7 @@ valide (~6 jours). Pour un usage non interactif, ``MYGES_USERNAME`` / ``MYGES_PA
 from __future__ import annotations
 
 import contextlib
+import itertools
 import json
 import os
 import re
@@ -36,7 +37,7 @@ from . import pending as pending_mod
 from . import watch as watch_mod
 from ._version import __version__
 from .client import MyGES
-from .errors import MyGESError, TokenExpiredError
+from .errors import MyGESError, NotFoundError, TokenExpiredError
 from .ics import to_ics
 from .models import AgendaEvent
 
@@ -686,17 +687,109 @@ def syllabus(course: CourseArg, year: YearOpt = None, json_: JsonOpt = False) ->
 # ---------------------------------------------------------------- Personnes
 
 
+MailOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--mail",
+        metavar="QUI",
+        help="Préparer un e-mail dans Outlook : nom (ou partie), plusieurs séparés par des "
+        "virgules, « tous » pour toute la liste.",
+    ),
+]
+SubjectOpt = Annotated[str, typer.Option("--subject", "-s", help="Objet de l'e-mail.")]
+BodyOpt = Annotated[str, typer.Option("--body", help="Texte de l'e-mail.")]
+MailtoOpt = Annotated[
+    bool,
+    typer.Option(
+        "--mailto", help="Client de messagerie par défaut (Outlook bureau…) au lieu d'Outlook web."
+    ),
+]
+
+
+def _full_name(person: Any) -> str:
+    return f"{person.firstname} {person.lastname}".strip()
+
+
+def _pick_people(
+    people: Sequence[Any], who: str, label: Callable[[Any], str] = _full_name
+) -> list[Any]:
+    """Personnes désignées par ``who`` : « tous », ou des noms séparés par des virgules
+    (chaque nom doit en désigner exactement une ; ``label`` élargit la recherche)."""
+    if _fold(who.strip()) in ("tous", "toutes", "all"):
+        return list(people)
+    chosen: list[Any] = []
+    for ref in filter(None, (part.strip() for part in who.split(","))):
+        words = _fold(ref).split()
+        matches = [p for p in people if all(w in _fold(label(p)) for w in words)]
+        if len(matches) != 1:
+            if matches:
+                err.print(f"[red]« {ref} » est ambigu[/], préciser parmi :")
+                for p in matches:
+                    err.print(f"  {label(p)}")
+            else:
+                err.print(f"[red]Personne ne correspond à « {ref} ».[/]")
+            raise typer.Exit(2)
+        if matches[0] not in chosen:
+            chosen.append(matches[0])
+    if not chosen:
+        raise typer.BadParameter("indiquer au moins un nom, ou « tous »", param_hint="--mail")
+    return chosen
+
+
+def _compose(people: Sequence[Any], subject: str, body: str, mailto: bool) -> None:
+    from . import mail
+
+    reachable = [p for p in people if p.email]
+    for person in people:
+        if not person.email:
+            err.print(f"[yellow]![/] {_full_name(person)} n'a pas d'adresse sur myGES.")
+    if not reachable:
+        raise typer.Exit(1)
+    url = mail.compose_url(
+        [p.email for p in reachable], subject, body, client="mailto" if mailto else "outlook"
+    )
+    names = ", ".join(_full_name(p) for p in reachable)
+    if mail.open_url(url):
+        where = "le client de messagerie" if mailto else "Outlook"
+        console.print(f"Brouillon ouvert dans {where} pour : {names}")
+    else:
+        console.print(f"Brouillon pour : {names}\nOuvrir ce lien dans le navigateur :")
+        console.print(url, soft_wrap=True, highlight=False)
+
+
 @app.command()
-def teachers(year: YearOpt = None, json_: JsonOpt = False) -> None:
-    """Intervenants de l'année."""
+def teachers(
+    year: YearOpt = None,
+    mail: MailOpt = None,
+    subject: SubjectOpt = "",
+    body: BodyOpt = "",
+    mailto: MailtoOpt = False,
+    json_: JsonOpt = False,
+) -> None:
+    """Intervenants de l'année, avec leurs matières.
+
+    `--mail` accepte aussi une matière : `myges teachers --mail python`.
+    """
     with _client() as client:
         data = client.teachers(year)
+        courses = [] if json_ else client.courses(year)
     if json_:
         return _dump(data)
+    taught: dict[int, list[str]] = {}
+    for course in sorted(courses, key=lambda c: _fold(c.name)):
+        if course.teacher_id is not None and course.name not in taught.get(course.teacher_id, []):
+            taught.setdefault(course.teacher_id, []).append(course.name)
+
+    def subjects(person: Any) -> str:
+        return ", ".join(taught.get(person.uid, []))
+
+    if mail:
+        chosen = _pick_people(data, mail, lambda p: f"{_full_name(p)} {subjects(p)}")
+        return _compose(chosen, subject, body, mailto)
     _table(
         "Intervenants",
-        data,
-        [("Nom", lambda p: f"{p.firstname} {p.lastname}"), ("Email", lambda p: p.email)],
+        sorted(data, key=lambda p: _fold(p.lastname)),
+        [("Nom", _full_name), ("Email", lambda p: p.email), ("Matières", subjects)],
     )
 
 
@@ -719,16 +812,43 @@ def classes(year: YearOpt = None, json_: JsonOpt = False) -> None:
 
 
 @app.command()
-def students(class_id: int, json_: JsonOpt = False) -> None:
-    """Étudiants d'une classe (identifiant donné par `myges classes`)."""
+def students(
+    class_id: Annotated[
+        int | None,
+        typer.Argument(
+            help="Classe (`myges classes`) ; défaut : la vôtre, si vous n'en avez qu'une."
+        ),
+    ] = None,
+    year: YearOpt = None,
+    mail: MailOpt = None,
+    subject: SubjectOpt = "",
+    body: BodyOpt = "",
+    mailto: MailtoOpt = False,
+    json_: JsonOpt = False,
+) -> None:
+    """Étudiants d'une classe."""
     with _client() as client:
+        if class_id is None:
+            mine = client.classes(year)
+            if len(mine) != 1:
+                err.print(
+                    "[red]Préciser la classe[/] parmi :" if mine else "[red]Aucune classe.[/]"
+                )
+                for c in mine:
+                    err.print(f"  {c.puid}  {c.name}")
+                raise typer.Exit(2)
+            class_id = mine[0].puid
         data = client.class_students(class_id)
+        me = client.profile().uid if mail else None
     if json_:
         return _dump(data)
+    if mail:
+        # « tous » : la classe sans soi-même.
+        return _compose(_pick_people([p for p in data if p.uid != me], mail), subject, body, mailto)
     _table(
         "Étudiants",
-        data,
-        [("Nom", lambda p: f"{p.firstname} {p.lastname}"), ("Email", lambda p: p.email)],
+        sorted(data, key=lambda p: _fold(p.lastname)),
+        [("Nom", _full_name), ("Email", lambda p: p.email)],
     )
 
 
@@ -918,22 +1038,98 @@ def steps(json_: JsonOpt = False) -> None:
 # ---------------------------------------------------------------- Vie de campus
 
 
+NewsInspect = Annotated[
+    str | None,
+    typer.Option(
+        "--inspect", metavar="ID|TITRE", help="Lire une actualité : identifiant ou partie du titre."
+    ),
+]
+
+
 @app.command()
 def news(
     page: Annotated[int, typer.Option(help="Page (à partir de 0).")] = 0,
     size: Annotated[int, typer.Option(help="Taille de page.")] = 10,
+    inspect: NewsInspect = None,
     json_: JsonOpt = False,
 ) -> None:
-    """Actualités de l'école."""
+    """Actualités de l'école (`--inspect` pour en lire une)."""
     with _client() as client:
+        if inspect is not None:
+            item = _find_news(client, inspect)
+            return _dump(item) if json_ else _show_news(item)
         data = client.news(page, size)
     if json_:
         return _dump(data)
     _table(
         f"Actualités (page {data.number + 1}/{data.total_pages})",
         data.content,
-        [("Date", lambda n: _fmt_dt(n.date, "%d/%m/%Y")), ("Titre", lambda n: n.title)],
+        [
+            ("id", lambda n: n.ne_id),
+            ("Date", lambda n: _fmt_dt(n.date, "%d/%m/%Y")),
+            ("Titre", lambda n: n.title),
+        ],
     )
+
+
+NEWS_SEARCH_DEPTH = 100  # actualités parcourues pour une recherche par titre
+
+
+def _find_news(client: MyGES, ref: str) -> Any:
+    ref = ref.strip()
+    if ref.isdigit():
+        try:
+            return client.news_item(int(ref))
+        except NotFoundError:
+            err.print(f"[red]Actualité {ref} introuvable.[/] Voir `myges news`.")
+            raise typer.Exit(2) from None
+    words = _fold(ref).split()
+    recent = itertools.islice(client.iter_news(), NEWS_SEARCH_DEPTH)
+    matches = [n for n in recent if all(w in _fold(n.title) for w in words)]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        err.print(
+            f"[red]Aucune des {NEWS_SEARCH_DEPTH} dernières actualités ne correspond à "
+            f"« {ref} ».[/]"
+        )
+    else:
+        err.print(f"[red]« {ref} » est ambigu[/], préciser parmi :")
+        for n in matches:
+            err.print(f"  {n.ne_id}  {n.title}")
+    raise typer.Exit(2)
+
+
+def _html_links(fragment: str) -> list[tuple[str, str]]:
+    """Liens ``<a href>`` d'un fragment HTML : (texte, url), sans doublon."""
+    import html
+
+    found: dict[str, str] = {}
+    for href, label in re.findall(r'(?is)<a\b[^>]*?href="([^"]+)"[^>]*>(.*?)</a>', fragment):
+        url = html.unescape(href).strip()
+        if url.startswith(("http://", "https://", "mailto:")) and url not in found:
+            found[url] = _html_to_text(label) or url
+    return [(label, url) for url, label in found.items()]
+
+
+def _show_news(item: Any) -> None:
+    console.print(f"[bold]{item.title.strip()}[/]")
+    console.print(f"{_fmt_dt(item.date, '%d/%m/%Y')} · {item.author or '—'}")
+    content = item.html or item.text or item.summary or ""
+    if content:
+        console.print()
+        console.print(_html_to_text(content), highlight=False)
+    links = _html_links(item.html or "")
+    if links:
+        console.print("\n[bold]Liens[/]")
+        for label, url in links:
+            console.print(
+                f"  {label} : {url}" if label != url else f"  {url}",
+                highlight=False,
+                soft_wrap=True,
+            )
+    if page := item.href("url"):
+        console.print(f"\n[dim]Sur myGES : {page}[/]", highlight=False, soft_wrap=True)
 
 
 events_app = typer.Typer(help="Événements du campus et inscriptions.")
@@ -1006,7 +1202,10 @@ def _html_to_text(fragment: str) -> str:
 
     # Un saut de ligne à l'ouverture d'un bloc (pas à la fermeture) : « </div><div> » ne
     # double pas l'interligne, et un bloc vide « <div><br></div> » reste une ligne vide.
-    text = re.sub(r"(?i)<br\s*/?>|<(div|p|li)[^>]*>", "\n", fragment)
+    # Retours à la ligne de mise en forme du source (« </li>\n<li> ») : pas du contenu.
+    text = re.sub(r">[ \t]*\n\s*<", "><", fragment)
+    text = re.sub(r"(?i)<li\b[^>]*>", "\n• ", text)
+    text = re.sub(r"(?i)<br\s*/?>|<(div|p|h[1-6])\b[^>]*>", "\n", text)
     text = html.unescape(re.sub(r"<[^>]+>", "", text)).replace("\xa0", " ")
     lines = [line.strip() for line in text.splitlines()]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
@@ -1578,7 +1777,7 @@ def _remind_before() -> timedelta | None:
 
 
 def _event_actions(changes: list[watch_mod.Change]) -> list[notify.Action]:
-    """Boutons ntfy pour les nouveaux événements : s'inscrire (si `myges serve` tourne)
+    """Boutons ntfy pour les nouveaux événements : s'inscrire (si `myges notify serve` tourne)
     ou voir la page myGES."""
     serve = _load_config().get("serve") or {}
     events = [c.event_id for c in changes if c.kind == "event_new" and c.event_id][:3]
@@ -1913,7 +2112,8 @@ def _write_state(path: Path, state: dict[str, Any]) -> None:
 
 
 notify_app = typer.Typer(
-    help="Canaux de notification de `myges watch` (ntfy, Discord, e-mail).",
+    help="Canaux de notification de `myges watch` (ntfy, Discord, e-mail) et boutons "
+    "« S'inscrire ».",
     no_args_is_help=True,
 )
 add_app = typer.Typer(help="Ajouter un canal de notification.", no_args_is_help=True)
@@ -2012,6 +2212,9 @@ def notify_list() -> None:
         console.print("[dim]Aucun canal. Voir `myges notify add --help`.[/]")
     for number, channel in enumerate(channels, 1):
         console.print(f"{number}. {notify.describe(channel)}")
+    buttons = _load_config().get("serve") or {}
+    if buttons.get("url"):
+        console.print(f"Boutons « S'inscrire » : {buttons['url']} (myges notify serve)")
 
 
 @notify_app.command("remove")
@@ -2040,6 +2243,17 @@ def notify_test() -> None:
     if failures:
         raise typer.Exit(1)
     console.print(f"[green]Message de test envoyé à {len(_channels())} canal(aux).[/]")
+    buttons = _load_config().get("serve") or {}
+    if buttons.get("url"):
+        url = f"{buttons['url'].rstrip('/')}/health"
+        try:
+            httpx.get(url, timeout=3).raise_for_status()
+            console.print(f"[green]Boutons « S'inscrire » joignables[/] ({buttons['url']}).")
+        except httpx.HTTPError:
+            err.print(
+                f"[yellow]![/] Boutons « S'inscrire » injoignables ({buttons['url']}) : "
+                "`myges notify serve` tourne-t-il ?"
+            )
 
 
 # ---------------------------------------------------------------- Google Calendar
@@ -2301,7 +2515,6 @@ def summary(
 # ---------------------------------------------------------------- Boutons de notification
 
 
-@app.command()
 def serve(
     listen: Annotated[
         str,
@@ -2314,11 +2527,11 @@ def serve(
         typer.Option(help="Adresse vue par le téléphone, si différente de --listen."),
     ] = None,
 ) -> None:
-    """Recevoir les boutons « S'inscrire » des notifications ntfy (à laisser tourner).
+    """Activer les boutons « S'inscrire » des notifications ntfy (service à laisser tourner).
 
     Enregistre l'adresse et un jeton dans la config : les alertes « nouvel événement »
     portent alors un bouton qui lance la pré-inscription sur cette machine. N'écouter que
-    sur une adresse privée.
+    sur une adresse privée (tailnet, réseau local).
     """
     import logging
     import secrets
@@ -2359,6 +2572,11 @@ def serve(
         pass
     finally:
         server.server_close()
+
+
+notify_app.command("serve")(serve)
+# Ancien nom (avant 0.5), gardé pour les services systemd déjà installés.
+app.command("serve", hidden=True)(serve)
 
 
 # ---------------------------------------------------------------- Exploration

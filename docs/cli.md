@@ -100,18 +100,36 @@ myges events unsubscribe 4525       # se désinscrire (après)
 ## Vie de l'école et personnes
 
 ```bash
-myges news                       # actualités
+myges news                       # actualités (avec leur id)
+myges news --inspect 4923        # lire une actualité : texte, liens (id ou partie du titre)
 myges campus
-myges teachers
+myges teachers                   # intervenants et leurs matières
 myges classes
-myges students <puid>            # étudiants d'une classe (puid donné par `myges classes`)
+myges students                   # votre classe (sinon : myges students <puid>)
 myges profile
 ```
+
+### Écrire à un intervenant ou à la classe
+
+`--mail` ouvre un brouillon dans Outlook sur le web, destinataires remplis. Les adresses
+myGES sont des boîtes Microsoft 365 de l'école : Outlook est déjà connecté au bon compte,
+et rien ne part sans votre clic sur « Envoyer ».
+
+```bash
+myges teachers --mail python                      # par matière ou par nom
+myges teachers --mail "martin, durand" -s "Projet annuel"
+myges students --mail "dupont"                    # un camarade
+myges students --mail tous --body "Salut à tous," # toute la classe, sauf vous
+myges teachers --mail git --mailto                # client de messagerie par défaut
+```
+
+Un nom ambigu affiche les possibilités. Sans navigateur (SSH, VPS, WSL sans `wslview`),
+le lien est affiché, à ouvrir sur une machine qui en a un.
 
 ## Alertes et Google Calendar
 
 - [Alertes](alertes.md) : `myges watch`, `myges notify …`, rappels (`myges remind`),
-  récapitulatif (`myges summary`), bouton « S'inscrire » (`myges serve`)
+  récapitulatif (`myges summary`), bouton « S'inscrire » (`myges notify serve`)
 - [Google Calendar](google-calendar.md) : `myges gcal …`
 
 ## Exploration de l'API
