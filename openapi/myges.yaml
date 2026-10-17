@@ -641,14 +641,14 @@ paths:
       operationId: getProjectGroupMessages
       summary: Messages d'un groupe de projet
       description: |
-        Messagerie interne d'un groupe. Vide sur tous les groupes testés : le format des
-        messages n'a pas pu être observé.
-      x-verified: "2026-10-15"
+        Chat interne d'un groupe de projet (celui de l'onglet « Gestion du groupe » sur
+        myges.fr). Réservé aux membres du groupe.
+      x-verified: "2026-10-17"
       parameters:
         - $ref: "#/components/parameters/GroupId"
       responses:
         "200":
-          description: Messages (format des éléments non observé).
+          description: Messages du groupe.
           content:
             application/json:
               schema:
@@ -657,17 +657,20 @@ paths:
                   - properties:
                       result:
                         type: array
-                        items: { type: object }
+                        items: { $ref: "#/components/schemas/ProjectGroupMessage" }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [Projets]
       operationId: sendProjectGroupMessage
       summary: Envoyer un message au groupe
       description: |
-        ⚠️ **Écriture, non vérifiée.** Repris de
-        [quantumsheep/myges-cli](https://github.com/quantumsheep/myges-cli). Le message est
-        visible par tout le groupe et l'intervenant.
-      x-verified: false
+        ⚠️ **Écriture.** Poste dans le chat du groupe, visible par tous ses membres.
+
+        **Particularité observée** : le message est enregistré, puis l'API répond **500**
+        (corps d'erreur Spring sans message). Vérifier le succès en relisant
+        `GET /me/projectGroups/{groupId}/messages`, et **ne pas renvoyer** sur un 500 :
+        le message serait posté deux fois.
+      x-verified: "2026-10-17"
       parameters:
         - $ref: "#/components/parameters/GroupId"
       requestBody:
@@ -681,8 +684,14 @@ paths:
                 projectGroupId: { type: integer, format: int64 }
                 message: { type: string }
       responses:
-        "200": { description: Message envoyé (format de réponse non observé). }
+        "200": { description: "Message envoyé (jamais observé : voir 500)." }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: |
+            Réponse observée alors que le message **a bien été enregistré**.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
 
   /me/courses/{rcId}/projects/{projectId}/groups/{groupId}:
     parameters:
@@ -1636,6 +1645,24 @@ components:
         psf_role_user: { type: string }
         psf_begin_upload: { $ref: "#/components/schemas/EpochMillis" }
         psf_end_upload: { $ref: "#/components/schemas/EpochMillis" }
+        links: { $ref: "#/components/schemas/Links" }
+
+    ProjectGroupMessage:
+      type: object
+      description: Message du chat d'un groupe de projet.
+      required: [project_message_id, message]
+      properties:
+        project_message_id: { type: integer, format: int64 }
+        uid: { type: integer, format: int64, description: Auteur. }
+        firstname: { type: string }
+        name: { type: string, description: Nom de famille de l'auteur. }
+        message: { type: string }
+        date: { $ref: "#/components/schemas/EpochMillis" }
+        is_deleted: { type: boolean }
+        deletion_date:
+          oneOf:
+            - $ref: "#/components/schemas/EpochMillis"
+            - type: "null"
         links: { $ref: "#/components/schemas/Links" }
 
     ProjectGroupLog:

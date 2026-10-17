@@ -454,8 +454,31 @@ def build_server() -> MCPServer:
         return {
             "project": found.name.strip(),
             "group": group.group_name,
-            "messages": [{k: v for k, v in m.items() if k != "links"} for m in messages],
+            "messages": [
+                {
+                    "author": f"{msg.firstname or ''} {msg.name or ''}".strip(),
+                    "date": _iso(msg.date),
+                    "text": msg.message,
+                }
+                for msg in messages
+                if not msg.is_deleted
+            ],
         }
+
+    @server.tool(annotations=MYGES_WRITE)
+    def send_project_message(project: str, message: str) -> dict[str, Any]:
+        """Poster un message dans le chat du groupe de l'utilisateur pour un projet ou un TP
+        (id ou partie du nom). Visible par tout le groupe, qui peut être prévenu par e-mail.
+        Uniquement à la demande explicite de l'utilisateur, avec le texte qu'il a validé."""
+        if not message.strip():
+            raise ToolError("message vide")
+        with _session() as client:
+            found = _find_project(client, project)
+            if cli._my_group(found, client.profile().uid) is None:
+                raise ToolError(f"vous n'êtes dans aucun groupe pour « {found.name.strip()} »")
+            is_practical = any(p.project_id == found.project_id for p in client.practicals())
+        command = "practicals" if is_practical else "projects"
+        return _run_cli(command, "--inspect", str(found.project_id), "--message", message)
 
     @server.tool(annotations=READ)
     def events(only_subscribed: bool = False) -> list[dict[str, Any]]:

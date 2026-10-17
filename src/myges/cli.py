@@ -870,6 +870,14 @@ ProjectDownload = Annotated[
         help="Avec --inspect : télécharger les pièces jointes (défaut : dossier courant).",
     ),
 ]  # fmt: skip
+ProjectMessage = Annotated[
+    str | None,
+    typer.Option(
+        "--message", "-m", metavar="TEXTE",
+        help="Avec --inspect : poster TEXTE dans le chat de mon groupe (visible par le groupe).",
+    ),
+]  # fmt: skip
+CHAT_LINES = 10  # derniers messages affichés par --inspect
 
 
 def _my_group(project: Any, uid: int) -> Any:
@@ -889,10 +897,13 @@ def _next_deadline(project: Any, now: datetime) -> datetime | None:
 def _projects_command(
     label: str, items: list[Any], uid: int, catalog: _Courses,
     inspect: str | None, download: Path | None, client: MyGES,
+    message: str | None = None,
 ) -> None:  # fmt: skip
     now = datetime.now(_TZ)
+    if message is not None and inspect is None:
+        raise typer.BadParameter("à utiliser avec --inspect PROJET", param_hint="--message")
     if inspect is not None:
-        return _inspect_project(items, inspect, uid, download, client)
+        return _inspect_project(items, inspect, uid, download, client, message)
     _table(
         label,
         items,
@@ -926,10 +937,14 @@ def _find_project(items: list[Any], ref: str) -> Any:
 
 
 def _inspect_project(
-    items: list[Any], ref: str, uid: int, download: Path | None, client: MyGES
-) -> None:
+    items: list[Any], ref: str, uid: int, download: Path | None, client: MyGES,
+    message: str | None = None,
+) -> None:  # fmt: skip
     project = _find_project(items, ref)
     group = _my_group(project, uid)
+    if message is not None and group is None:
+        err.print("[red]Pas de groupe pour ce projet : message non envoyé.[/]")
+        raise typer.Exit(2)
     console.print(f"[bold]{project.name.strip()}[/]")
     console.print(f"{project.course_name} · {project.author or '—'}")
     if group is None:
@@ -970,6 +985,8 @@ def _inspect_project(
             console.print(
                 f"  {f.filename}  [dim](ajoutée le {_fmt_dt(f.pf_crea_date, '%d/%m/%Y')})[/]"
             )
+    if group is not None:
+        _group_chat(client, group.project_group_id, message)
     if download is not None:
         folder = download.expanduser() / _safe_name(project.name.strip())
         for f in files:
@@ -986,11 +1003,30 @@ def _inspect_project(
             console.print("[dim]Aucune pièce jointe à télécharger.[/]")
 
 
+def _group_chat(client: MyGES, group_id: int, message: str | None) -> None:
+    """Derniers messages du chat du groupe, après avoir posté ``message`` s'il y en a un."""
+    if message is not None:
+        if not message.strip():
+            raise typer.BadParameter("message vide", param_hint="--message")
+        with _client(allow_writes=True) as writer:
+            writer.send_project_group_message(group_id, message)
+        console.print("\n[green]Message posté[/] dans le chat du groupe.")
+    chat = client.project_group_messages(group_id)
+    shown = [msg for msg in chat if not msg.is_deleted][-CHAT_LINES:]
+    if shown:
+        console.print(f"\n[bold]Chat du groupe[/] ({len(chat)} message(s))")
+        for msg in shown:
+            author = f"{msg.firstname or ''} {msg.name or ''}".strip() or "?"
+            console.print(f"  [dim]{_fmt_dt(msg.date, '%d/%m %H:%M')}[/] {author} : ", end="")
+            console.print(msg.message, highlight=False, markup=False)
+
+
 @app.command()
 def projects(
     year: YearOpt = None,
     inspect: ProjectInspect = None,
     download: ProjectDownload = None,
+    message: ProjectMessage = None,
     json_: JsonOpt = False,
 ) -> None:
     """Projets de groupe : mon groupe et la prochaine échéance ; `--inspect` pour le détail."""
@@ -999,7 +1035,9 @@ def projects(
         if json_:
             return _dump(data)
         catalog = _Courses(client, year)
-        _projects_command("Projets", data, client.profile().uid, catalog, inspect, download, client)
+        _projects_command(
+            "Projets", data, client.profile().uid, catalog, inspect, download, client, message
+        )
 
 
 @app.command()
@@ -1007,6 +1045,7 @@ def practicals(
     year: YearOpt = None,
     inspect: ProjectInspect = None,
     download: ProjectDownload = None,
+    message: ProjectMessage = None,
     json_: JsonOpt = False,
 ) -> None:
     """Travaux pratiques (TP) : mon groupe et la prochaine échéance ; `--inspect` pour le détail."""
@@ -1015,7 +1054,9 @@ def practicals(
         if json_:
             return _dump(data)
         catalog = _Courses(client, year)
-        _projects_command("TP", data, client.profile().uid, catalog, inspect, download, client)
+        _projects_command(
+            "TP", data, client.profile().uid, catalog, inspect, download, client, message
+        )
 
 
 @app.command()

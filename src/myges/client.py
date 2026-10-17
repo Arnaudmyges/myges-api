@@ -29,6 +29,7 @@ from .errors import (
     APIError,
     BadRequestError,
     BlockedRequestError,
+    MyGESError,
     NotFoundError,
     TokenExpiredError,
     WriteNotAllowedError,
@@ -62,6 +63,29 @@ def to_millis(value: When) -> int:
 def _parse_list(model: type[M], result: Any) -> list[M]:
     adapter = TypeAdapter(list[model], config=_PRIVATE)  # type: ignore[valid-type]
     return adapter.validate_python(result or [])
+
+
+def _sent_order(messages: list[m.ProjectGroupMessage]) -> list[m.ProjectGroupMessage]:
+    return sorted(messages, key=lambda msg: (msg.date is None, msg.date, msg.project_message_id))
+
+
+def _posted(
+    messages: list[m.ProjectGroupMessage],
+    seen: set[int],
+    text: str,
+    failure: APIError | None,
+) -> m.ProjectGroupMessage:
+    """Le message qu'on vient de poster, retrouvé dans le chat relu."""
+    new = [
+        msg
+        for msg in messages
+        if msg.project_message_id not in seen and msg.message.strip() == text.strip()
+    ]
+    if new:
+        return new[-1]
+    if failure is not None:
+        raise failure
+    raise MyGESError("message accepté par myGES mais absent du chat relu")
 
 
 class _BaseClient:
@@ -372,18 +396,33 @@ class MyGES(_BaseClient):
         """Contenu d'un fichier de projet (``ProjectFile.pf_id``), ex. cahier des charges."""
         return self._content(self._send("GET", f"/me/projectFiles/{file_id}"))
 
-    def project_group_messages(self, group_id: int) -> list[dict[str, Any]]:
-        """Format des messages non documenté : renvoyés tels quels."""
-        return list(self._get(f"/me/projectGroups/{group_id}/messages") or [])
-
-    def send_project_group_message(self, group_id: int, message: str) -> Any:
-        """⚠️ Écriture non vérifiée. Nécessite ``allow_writes=True``."""
-        self._check_write("send_project_group_message")
-        return self.request(
-            "POST",
-            f"/me/projectGroups/{group_id}/messages",
-            json={"projectGroupId": group_id, "message": message},
+    def project_group_messages(self, group_id: int) -> list[m.ProjectGroupMessage]:
+        """Chat du groupe, du plus ancien au plus récent."""
+        return _sent_order(
+            _parse_list(m.ProjectGroupMessage, self._get(f"/me/projectGroups/{group_id}/messages"))
         )
+
+    def send_project_group_message(self, group_id: int, message: str) -> m.ProjectGroupMessage:
+        """Poster dans le chat du groupe (membres du groupe uniquement).
+
+        myGES enregistre le message puis répond 500 : le succès se vérifie en relisant le
+        chat. Jamais renvoyé automatiquement, pour ne pas poster deux fois. Nécessite
+        ``allow_writes=True``.
+        """
+        self._check_write("send_project_group_message")
+        seen = {msg.project_message_id for msg in self.project_group_messages(group_id)}
+        failure: APIError | None = None
+        try:
+            self.request(
+                "POST",
+                f"/me/projectGroups/{group_id}/messages",
+                json={"projectGroupId": group_id, "message": message},
+            )
+        except APIError as exc:
+            if exc.status_code != 500:
+                raise
+            failure = exc
+        return _posted(self.project_group_messages(group_id), seen, message, failure)
 
     def join_project_group(self, rc_id: int, project_id: int, group_id: int) -> Any:
         """⚠️ Écriture non vérifiée. Nécessite ``allow_writes=True``."""
@@ -622,16 +661,27 @@ class AsyncMyGES(_BaseClient):
     async def download_project_file(self, file_id: int) -> bytes:
         return self._content(await self._send("GET", f"/me/projectFiles/{file_id}"))
 
-    async def project_group_messages(self, group_id: int) -> list[dict[str, Any]]:
-        return list(await self._get(f"/me/projectGroups/{group_id}/messages") or [])
+    async def project_group_messages(self, group_id: int) -> list[m.ProjectGroupMessage]:
+        result = await self._get(f"/me/projectGroups/{group_id}/messages")
+        return _sent_order(_parse_list(m.ProjectGroupMessage, result))
 
-    async def send_project_group_message(self, group_id: int, message: str) -> Any:
+    async def send_project_group_message(
+        self, group_id: int, message: str
+    ) -> m.ProjectGroupMessage:
         self._check_write("send_project_group_message")
-        return await self.request(
-            "POST",
-            f"/me/projectGroups/{group_id}/messages",
-            json={"projectGroupId": group_id, "message": message},
-        )
+        seen = {msg.project_message_id for msg in await self.project_group_messages(group_id)}
+        failure: APIError | None = None
+        try:
+            await self.request(
+                "POST",
+                f"/me/projectGroups/{group_id}/messages",
+                json={"projectGroupId": group_id, "message": message},
+            )
+        except APIError as exc:
+            if exc.status_code != 500:
+                raise
+            failure = exc
+        return _posted(await self.project_group_messages(group_id), seen, message, failure)
 
     async def join_project_group(self, rc_id: int, project_id: int, group_id: int) -> Any:
         self._check_write("join_project_group")

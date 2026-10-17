@@ -278,6 +278,33 @@ def _mock_projects(router: respx.MockRouter) -> None:
     router.get(f"{API_URL}/me/2026/projects").mock(
         return_value=httpx.Response(200, json=fixture("getProjects"))
     )
+    router.get(f"{API_URL}/me/projectGroups/520001/messages").mock(
+        return_value=httpx.Response(200, json=fixture("getProjectGroupMessages"))
+    )
+
+
+def test_project_inspect_shows_chat_and_posts(home: Path) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        _mock_projects(router)
+        post = router.post(f"{API_URL}/me/projectGroups/520001/messages").mock(
+            return_value=httpx.Response(
+                200, json={"response_code": 0, "version": "1", "result": None}
+            )
+        )
+        shown = CliRunner().invoke(app, ["projects", "--inspect", "24001"])
+        assert not post.called
+        # myGES relit le chat : le fixture ne contient pas le message, l'envoi doit échouer
+        # proprement sans être retenté.
+        sent = CliRunner().invoke(app, ["projects", "--inspect", "24001", "--message", "Salut [b]"])
+        alone = CliRunner().invoke(app, ["projects", "--message", "x"])
+    assert shown.exit_code == 0, shown.output
+    assert "Chat du groupe" in shown.output
+    assert "On se retrouve jeudi pour la démo ?" in shown.output
+    assert post.call_count == 1
+    assert json.loads(post.calls.last.request.content)["message"] == "Salut [b]"
+    assert sent.exit_code == 1
+    assert "absent du chat" in sent.output
+    assert alone.exit_code == 2
 
 
 def test_projects_show_my_group(home: Path) -> None:

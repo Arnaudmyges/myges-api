@@ -49,8 +49,9 @@ préférer le nom dans les scripts.
 
 ```bash
 myges projects                              # mon groupe et la prochaine échéance
-myges projects --inspect 24134              # (id ou nom) groupe, membres, consignes, pièces jointes
+myges projects --inspect 24134              # (id ou nom) groupe, membres, consignes, pièces jointes, chat
 myges projects --inspect proxmox --download # + télécharger les pièces jointes
+myges projects --inspect proxmox -m "Dispo jeudi pour la démo ?"   # poster dans le chat du groupe
 myges practicals                            # TP, mêmes options
 myges steps                      # prochaines échéances
 ```

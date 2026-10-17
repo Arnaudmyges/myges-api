@@ -82,7 +82,7 @@ async def call_error(name: str, **arguments: Any) -> str:
     return str(result.content[0].text)  # type: ignore[union-attr]
 
 
-MYGES_WRITES = {"subscribe_event", "unsubscribe_event"}
+MYGES_WRITES = {"subscribe_event", "unsubscribe_event", "send_project_message"}
 LOCAL_WRITES = {
     "draft_email",
     "cancel_pending_registration",
@@ -270,11 +270,9 @@ async def test_school_tools(home: Path) -> None:
     assert [f["file_id"] for f in files] == [610001, 610002]  # anglais : pas de documents
     assert practicals[0]["name"] == "TP noté : pare-feu"
     assert deadlines[0]["project_id"] == 24001
-    assert messages == {
-        "project": "Mise en place d'un cluster Proxmox",
-        "group": "Groupe 1",
-        "messages": [],
-    }
+    assert messages["group"] == "Groupe 1"
+    assert messages["messages"][0]["author"] == "Alex MARTIN"
+    assert messages["messages"][0]["text"] == "On se retrouve jeudi pour la démo ?"
     for listing in (campuses, schools, partners, banners):
         assert listing
     assert classes[0]["puid"] == 20001
@@ -441,3 +439,32 @@ async def test_cli_failure_becomes_tool_error(home: Path, monkeypatch: pytest.Mo
 
     pending_mod.register([pending_mod.Pending(4525, "2026-10-16T12:00:00+02:00", 1, "x")])
     assert "EVENT_CLOSED" in await call_error("cancel_pending_registration", event_id=4525)
+
+
+async def test_send_project_message_goes_through_cli(home: Path, cli_runs: list[list[str]]) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        school_api(router)
+        await call("send_project_message", project="proxmox", message="Dispo jeudi ?")
+        no_group = await call_error("send_project_message", project="pare-feu", message="ok")
+        empty = await call_error("send_project_message", project="proxmox", message="  ")
+
+        practicals = copy.deepcopy(fixture("getPracticals"))
+        practicals["result"][0]["groups"] = [
+            {
+                "project_group_id": 530001,
+                "group_name": "Binôme 1",
+                "project_group_students": [{"u_id": 100001, "firstname": "Camille"}],
+            }
+        ]
+        router.get(f"{API_URL}/me/2026/practicals").mock(
+            return_value=httpx.Response(200, json=practicals)
+        )
+        await call("send_project_message", project="pare-feu", message="ok")
+        assert all(c.request.method == "GET" for c in router.calls)
+    assert "aucun groupe" in no_group
+    assert "vide" in empty
+    practical_id = str(practicals["result"][0]["project_id"])
+    assert cli_runs == [
+        ["projects", "--inspect", "24001", "--message", "Dispo jeudi ?"],
+        ["practicals", "--inspect", practical_id, "--message", "ok"],
+    ]

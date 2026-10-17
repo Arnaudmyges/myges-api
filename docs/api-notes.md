@@ -122,3 +122,15 @@ Observé en réel à l'ouverture des inscriptions du « Cloud Day » (12:00) :
 - `myges.fr/common/student-documents` (certificat de scolarité, calendriers, électifs,
   documents apprentis…) : aucun équivalent dans l'API parmi 43 noms testés. Ces documents
   ne sont accessibles que par le site web (session CAS).
+
+## 2026-10-17 — Chat des groupes de projet
+
+- `POST /me/projectGroups/{id}/messages` (`{"projectGroupId": id, "message": "…"}`) :
+  le message **est enregistré**, mais la réponse est un **500** (corps d'erreur Spring,
+  `message` vide). Probablement une étape après l'enregistrement (notification des
+  membres ?) qui échoue. Conséquence : vérifier en relisant le chat, et ne jamais renvoyer
+  sur un 500, sous peine de doublon.
+- `GET /me/projectGroups/{id}/messages` : `project_message_id`, `uid`, `firstname`, `name`,
+  `message`, `date` (epoch ms), `is_deleted`, `deletion_date`.
+- Aucune route de suppression connue : un message posté reste.
+

@@ -35,7 +35,7 @@ serveur public sur Internet).
 
 ## Ce que Claude peut faire
 
-33 outils. **Lecture** (rien ne change, ni sur myGES ni sur la machine) :
+34 outils. **Lecture** (rien ne change, ni sur myGES ni sur la machine) :
 
 | Domaine | Outils |
 | --- | --- |
@@ -44,7 +44,7 @@ serveur public sur Internet).
 | Notes | `grades` (moyennes par matière, par bloc, générale), `simulate_average` (« et si j'avais 14 en anglais ? »), `grade_needed` (« quelle note pour avoir 12 ? »), `absences` |
 | Matières | `courses`, `syllabus`, `course_files` (supports déposés) |
 | Personnes | `teachers` (avec leurs matières), `classmates` |
-| Projets, TP | `projects`, `practicals`, `next_deadlines`, `project_messages` |
+| Projets, TP | `projects`, `practicals`, `next_deadlines`, `project_messages` (chat du groupe) |
 | Vie de campus | `events`, `pending_registrations`, `news`, `read_news`, `announcements` |
 | Récapitulatif | `weekly_summary` (le même que `myges summary`) |
 
@@ -54,13 +54,13 @@ serveur public sur Internet).
 web, rien ne part sans votre clic sur « Envoyer » (sans navigateur, Claude donne le lien).
 
 **Votre compte myGES** : `subscribe_event` (tout de suite si c'est ouvert, sinon
-pré-inscription à l'ouverture, en arrière-plan) et `unsubscribe_event`. Ces deux outils
-sont marqués « destructifs » : le client MCP demande votre accord avant chaque appel.
-Évitez de les autoriser « toujours ».
+pré-inscription à l'ouverture, en arrière-plan), `unsubscribe_event`, et
+`send_project_message` (poster dans le chat de votre groupe de projet, visible par tout le
+groupe). Ces outils sont marqués « destructifs » : le client MCP demande votre accord avant
+chaque appel. Évitez de les autoriser « toujours ».
 
-Pas d'outil pour écrire dans la messagerie d'un groupe de projet, ni pour rejoindre ou
-quitter un groupe : ces actions de l'API n'ont pas encore été vérifiées en conditions
-réelles.
+Pas d'outil pour rejoindre ou quitter un groupe de projet : ces actions de l'API n'ont pas
+encore été vérifiées en conditions réelles.
 
 ## Vie privée
 

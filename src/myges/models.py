@@ -465,6 +465,19 @@ class ProjectStep(_Linked):
     files: list[ProjectStepFile] | None = None
 
 
+class ProjectGroupMessage(_Linked):
+    """Message du chat d'un groupe de projet."""
+
+    project_message_id: int
+    uid: int | None = None
+    firstname: str | None = None
+    name: str | None = None
+    message: str = ""
+    date: Timestamp | None = None
+    is_deleted: bool | None = None
+    deletion_date: Timestamp | None = None
+
+
 class ProjectGroupLog(_Linked):
     pgl_id: int | None = None
     pgr_id: int | None = None

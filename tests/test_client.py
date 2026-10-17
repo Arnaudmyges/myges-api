@@ -226,16 +226,86 @@ def test_writes_are_refused_by_default(client: MyGES, api: respx.MockRouter) -> 
     assert not route.called
 
 
-def test_writes_when_allowed(api: respx.MockRouter, auth: respx.Route) -> None:
-    route = api.post("/me/projectGroups/7/messages").mock(
-        return_value=httpx.Response(200, json={"response_code": 0, "version": "1", "result": None})
+def _chat(api: respx.MockRouter, posted: list[str], *, stored: bool) -> None:
+    """Chat simulé : le message posté apparaît à la relecture si ``stored``."""
+    base = fixture("getProjectGroupMessages")["result"]
+
+    def messages(_: httpx.Request) -> httpx.Response:
+        extra = [
+            {**base[0], "project_message_id": 900 + i, "uid": 100001, "message": text}
+            for i, text in enumerate(posted if stored else [])
+        ]
+        return httpx.Response(
+            200, json={"response_code": 0, "version": "1", "result": base + extra}
+        )
+
+    api.get("/me/projectGroups/7/messages").mock(side_effect=messages)
+
+
+def _myges_500() -> httpx.Response:
+    return httpx.Response(
+        500,
+        json={
+            "response_code": 0,
+            "version": "1",
+            "result": {
+                "status": 500,
+                "error": "Internal Server Error",
+                "message": "",
+                "path": "/x",
+            },
+        },
     )
+
+
+def test_group_message_500_but_stored_is_a_success(
+    api: respx.MockRouter, auth: respx.Route
+) -> None:
+    posted: list[str] = []
+    _chat(api, posted, stored=True)
+
+    def post(request: httpx.Request) -> httpx.Response:
+        posted.append(json.loads(request.content)["message"])
+        return _myges_500()
+
+    route = api.post("/me/projectGroups/7/messages").mock(side_effect=post)
     with MyGES("jdupont", "secret", token_store=MemoryTokenStore(), allow_writes=True) as c:
-        c.send_project_group_message(7, "bonjour")
+        sent = c.send_project_group_message(7, "bonjour")
+    assert sent.message == "bonjour"
+    assert sent.project_message_id == 900
+    assert route.call_count == 1  # jamais renvoyé
     assert json.loads(route.calls.last.request.content) == {
         "projectGroupId": 7,
         "message": "bonjour",
     }
+
+
+def test_group_message_500_not_stored_raises(api: respx.MockRouter, auth: respx.Route) -> None:
+    _chat(api, [], stored=False)
+    route = api.post("/me/projectGroups/7/messages").mock(return_value=_myges_500())
+    client = MyGES("jdupont", "secret", token_store=MemoryTokenStore(), allow_writes=True)
+    with client as c, pytest.raises(APIError) as caught:
+        c.send_project_group_message(7, "bonjour")
+    assert caught.value.status_code == 500
+    assert route.call_count == 1
+
+
+def test_group_message_other_errors_propagate(api: respx.MockRouter, auth: respx.Route) -> None:
+    _chat(api, [], stored=False)
+    api.post("/me/projectGroups/7/messages").mock(
+        return_value=httpx.Response(400, json=fixture("error_400"))
+    )
+    client = MyGES("jdupont", "secret", token_store=MemoryTokenStore(), allow_writes=True)
+    with client as c, pytest.raises(APIError):
+        c.send_project_group_message(7, "bonjour")
+
+
+def test_group_messages_parsed(api: respx.MockRouter, auth: respx.Route) -> None:
+    _chat(api, [], stored=False)
+    with MyGES("jdupont", "secret", token_store=MemoryTokenStore()) as c:
+        messages = c.project_group_messages(7)
+    assert messages[0].firstname == "Alex"
+    assert messages[0].date is not None
 
 
 # ---------------------------------------------------------------- Asynchrone
