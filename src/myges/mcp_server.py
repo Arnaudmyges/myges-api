@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -71,7 +71,18 @@ MYGES_WRITE = ToolAnnotations(
     read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=True
 )
 
+# Brouillon d'e-mail : rien ne part sans l'utilisateur.
+DRAFT = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True)
+
 DEFAULT_DOWNLOADS = Path.home() / "myges"
+
+REMOTE_NOTE = """
+- Ce serveur est distant : pas d'inscription, de message de groupe ni de téléchargement
+  ici (proposer Claude Code ou Claude Desktop pour ça). `draft_email` renvoie un lien de
+  brouillon Outlook à donner à l'utilisateur.
+"""
+
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 @contextmanager
@@ -233,17 +244,25 @@ def _person(person: Any, **extra: Any) -> dict[str, Any]:
     return {"name": cli._full_name(person), "email": person.email, **extra}
 
 
-def build_server() -> MCPServer:
+def build_server(remote: bool = False, **auth: Any) -> MCPServer:
+    """Serveur MCP. ``remote`` (claude.ai, via HTTP) : lecture et brouillons seulement ;
+    ``auth`` : ``auth`` et ``auth_server_provider`` de ``MCPServer`` (OAuth)."""
     server = MCPServer(
         name="myges",
         title="myGES",
-        instructions=INSTRUCTIONS,
+        instructions=INSTRUCTIONS + (REMOTE_NOTE if remote else ""),
         version=__version__,
         website_url="https://github.com/Arnaudmyges/myges-api",
         log_level="WARNING",
+        **auth,
     )
 
-    @server.tool(annotations=READ)
+    def tool(annotations: ToolAnnotations) -> Callable[[_F], _F]:
+        if remote and annotations not in (READ, DRAFT):
+            return lambda func: func  # non exposé à distance
+        return server.tool(annotations=annotations)
+
+    @tool(READ)
     def whoami() -> dict[str, Any]:
         """L'étudiant connecté : nom, e-mail de l'école, classe(s) et année en cours."""
         with _session() as client:
@@ -258,7 +277,7 @@ def build_server() -> MCPServer:
             "today": datetime.now(cli._TZ).date().isoformat(),
         }
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def agenda(
         start: str | None = None, days: int = 7, query: str | None = None
     ) -> list[dict[str, Any]]:
@@ -279,7 +298,7 @@ def build_server() -> MCPServer:
             if _matches(e.name, query)
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def next_class(query: str | None = None) -> dict[str, Any] | None:
         """Le prochain cours (ou celui en cours), éventuellement filtré par nom de cours.
 
@@ -298,7 +317,7 @@ def build_server() -> MCPServer:
         entry["ongoing"] = upcoming[0].start_date <= now
         return entry
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def grades(year: int | None = None) -> dict[str, Any]:
         """Notes et moyennes par matière, moyennes des blocs définis par l'étudiant, et
         moyenne générale pondérée par les coefficients.
@@ -344,7 +363,7 @@ def build_server() -> MCPServer:
             ],
         }
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def absences(year: int | None = None) -> list[dict[str, Any]]:
         """Absences et retards de l'année, justifiés ou non."""
         with _session() as client:
@@ -359,7 +378,7 @@ def build_server() -> MCPServer:
             for a in sorted(data, key=lambda a: a.date)
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def courses(year: int | None = None) -> list[dict[str, Any]]:
         """Matières de l'année : intervenant (avec e-mail), coefficient, ECTS, trimestre."""
         with _session() as client:
@@ -378,7 +397,7 @@ def build_server() -> MCPServer:
             for c in sorted(data, key=lambda c: cli._fold(c.name))
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def teachers(year: int | None = None) -> list[dict[str, Any]]:
         """Intervenants de l'année, avec leur e-mail et les matières qu'ils enseignent."""
         with _session() as client:
@@ -389,7 +408,7 @@ def build_server() -> MCPServer:
             for p in sorted(people, key=lambda p: cli._fold(p.lastname))
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def classmates(class_id: int | None = None) -> list[dict[str, Any]]:
         """Étudiants de la classe (défaut : celle de l'utilisateur), avec leur e-mail."""
         with _session() as client:
@@ -407,7 +426,7 @@ def build_server() -> MCPServer:
             _person(p) for p in sorted(people, key=lambda p: cli._fold(p.lastname)) if p.uid != me
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def projects(year: int | None = None) -> list[dict[str, Any]]:
         """Projets de groupe de l'année : groupe de l'utilisateur et ses membres, étapes
         avec consignes et échéances, pièces jointes (`download_project_files`)."""
@@ -416,7 +435,7 @@ def build_server() -> MCPServer:
             uid = client.profile().uid
         return [_project_entry(p, uid) for p in items]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def practicals(year: int | None = None) -> list[dict[str, Any]]:
         """TP de l'année (même structure que `projects`)."""
         with _session() as client:
@@ -424,7 +443,7 @@ def build_server() -> MCPServer:
             uid = client.profile().uid
         return [_project_entry(p, uid) for p in items]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def next_deadlines() -> list[dict[str, Any]]:
         """Prochaines échéances de projets et de TP, toutes matières confondues."""
         with _session() as client:
@@ -442,7 +461,7 @@ def build_server() -> MCPServer:
             for s in sorted(steps, key=lambda s: _later_last(s.psp_limit_date))
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def project_messages(project: str) -> dict[str, Any]:
         """Messages du groupe de l'utilisateur pour un projet ou un TP (id ou partie du nom)."""
         with _session() as client:
@@ -465,7 +484,7 @@ def build_server() -> MCPServer:
             ],
         }
 
-    @server.tool(annotations=MYGES_WRITE)
+    @tool(MYGES_WRITE)
     def send_project_message(project: str, message: str) -> dict[str, Any]:
         """Poster un message dans le chat du groupe de l'utilisateur pour un projet ou un TP
         (id ou partie du nom). Visible par tout le groupe, qui peut être prévenu par e-mail.
@@ -480,7 +499,7 @@ def build_server() -> MCPServer:
         command = "practicals" if is_practical else "projects"
         return _run_cli(command, "--inspect", str(found.project_id), "--message", message)
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def events(only_subscribed: bool = False) -> list[dict[str, Any]]:
         """Événements du campus (conférences, ateliers…), fenêtre d'inscription et
         inscription de l'utilisateur (s'inscrire : `subscribe_event`)."""
@@ -502,7 +521,7 @@ def build_server() -> MCPServer:
             if e.is_participant_subscribed or not only_subscribed
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def news(query: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
         """Actualités de l'école, les plus récentes d'abord (titre, date, id). query
         filtre sur le titre parmi les 100 dernières. Lire une actualité : `read_news`."""
@@ -512,7 +531,7 @@ def build_server() -> MCPServer:
             found = [n for n in recent if _matches(n.title, query)][:limit]
         return [{"news_id": n.ne_id, "title": n.title, "date": _iso(n.date)} for n in found]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def read_news(news_id: int) -> dict[str, Any]:
         """Texte complet d'une actualité, avec ses liens."""
         with _session() as client:
@@ -528,11 +547,7 @@ def build_server() -> MCPServer:
             "url": item.href("url"),
         }
 
-    @server.tool(
-        annotations=ToolAnnotations(
-            read_only_hint=False, destructive_hint=False, idempotent_hint=True
-        )
-    )
+    @tool(DRAFT)
     def draft_email(to: list[str], subject: str, body: str) -> dict[str, Any]:
         """Ouvrir un brouillon d'e-mail dans Outlook (web), destinataires, objet et texte
         remplis. Rien n'est envoyé : l'utilisateur relit et clique sur « Envoyer ».
@@ -555,7 +570,7 @@ def build_server() -> MCPServer:
 
     # ------------------------------------------------------------ Matières
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def syllabus(course: str, year: int | None = None) -> dict[str, Any]:
         """Syllabus d'une matière (rc_id ou partie du nom) : objectifs, séances, modalités
         d'évaluation, volume horaire."""
@@ -566,7 +581,7 @@ def build_server() -> MCPServer:
             raise ToolError(f"pas de syllabus publié pour « {found.name} »")
         return data.model_dump(mode="json", exclude={"links"}, exclude_none=True)
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def course_files(course: str | None = None, year: int | None = None) -> list[dict[str, Any]]:
         """Supports de cours déposés par les intervenants (toutes les matières, ou une
         seule : rc_id ou partie du nom). Télécharger : `download_course_files`."""
@@ -608,7 +623,7 @@ def build_server() -> MCPServer:
             resolved[_find_course(catalog, ref).rc_id] = value
         return blocs_mod.compute(catalog, marks, cli._stored_blocs(y), resolved)
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def simulate_average(simulated: dict[str, float], year: int | None = None) -> dict[str, Any]:
         """Moyenne générale et moyennes des blocs si l'on obtenait certaines notes.
 
@@ -628,7 +643,7 @@ def build_server() -> MCPServer:
             ],
         }
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def grade_needed(
         course: str, target: float = 10.0, bloc: str | None = None, year: int | None = None
     ) -> dict[str, Any]:
@@ -660,7 +675,7 @@ def build_server() -> MCPServer:
 
     # ------------------------------------------------------------ École
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def classes(year: int | None = None) -> list[dict[str, Any]]:
         """Classes de l'utilisateur pour l'année (puid utilisable dans `classmates`)."""
         with _session() as client:
@@ -670,7 +685,7 @@ def build_server() -> MCPServer:
             for c in data
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def campuses() -> list[dict[str, Any]]:
         """Campus de l'école, avec leur adresse."""
         with _session() as client:
@@ -680,14 +695,14 @@ def build_server() -> MCPServer:
             for c in data
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def schools() -> list[dict[str, Any]]:
         """Écoles du réseau auxquelles l'utilisateur est rattaché."""
         with _session() as client:
             data = client.schools()
         return [{"puid": e.puid, "name": e.name, "description": e.description} for e in data]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def partners() -> list[dict[str, Any]]:
         """Entreprises et organismes partenaires de l'école."""
         with _session() as client:
@@ -697,7 +712,7 @@ def build_server() -> MCPServer:
             for e in data
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def announcements() -> list[dict[str, Any]]:
         """Bandeaux d'annonce de la page d'accueil myGES."""
         with _session() as client:
@@ -713,7 +728,7 @@ def build_server() -> MCPServer:
             for b in data
         ]
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def weekly_summary(days: int = 7) -> dict[str, str]:
         """Récapitulatif prêt à lire : cours à venir, échéances, événements où l'utilisateur
         est inscrit, nouvelles notes et nouveaux supports (le même que `myges summary`)."""
@@ -724,7 +739,7 @@ def build_server() -> MCPServer:
 
     # ------------------------------------------------------------ Inscriptions
 
-    @server.tool(annotations=READ)
+    @tool(READ)
     def pending_registrations() -> list[dict[str, Any]]:
         """Pré-inscriptions en attente sur cette machine (inscription automatique à
         l'ouverture des inscriptions)."""
@@ -737,7 +752,7 @@ def build_server() -> MCPServer:
             raise ToolError(f"événement {event_id} introuvable sur myGES")
         return found
 
-    @server.tool(annotations=MYGES_WRITE)
+    @tool(MYGES_WRITE)
     def subscribe_event(event_id: int) -> dict[str, Any]:
         """Inscrire l'utilisateur à un événement : tout de suite si les inscriptions sont
         ouvertes, sinon pré-inscription automatique à leur ouverture (en arrière-plan).
@@ -750,7 +765,7 @@ def build_server() -> MCPServer:
             raise ToolError(f"inscriptions closes depuis le {_iso(closes)} : {event.event_title}")
         return _run_cli("events", "subscribe", str(event_id))
 
-    @server.tool(annotations=MYGES_WRITE)
+    @tool(MYGES_WRITE)
     def unsubscribe_event(event_id: int) -> dict[str, Any]:
         """Désinscrire l'utilisateur d'un événement. Uniquement à sa demande explicite."""
         event = _event(event_id)
@@ -758,7 +773,7 @@ def build_server() -> MCPServer:
             return {"ok": True, "output": f"Pas inscrit : {event.event_title}"}
         return _run_cli("events", "unsubscribe", str(event_id))
 
-    @server.tool(annotations=LOCAL_WRITE)
+    @tool(LOCAL_WRITE)
     def cancel_pending_registration(event_id: int) -> dict[str, Any]:
         """Annuler une pré-inscription en attente (voir `pending_registrations`)."""
         if all(w.event_id != event_id for w in pending_mod.load()):
@@ -767,7 +782,7 @@ def build_server() -> MCPServer:
 
     # ------------------------------------------------------------ Fichiers
 
-    @server.tool(annotations=LOCAL_WRITE)
+    @tool(LOCAL_WRITE)
     def download_course_files(
         course: str | None = None, directory: str | None = None, year: int | None = None
     ) -> dict[str, Any]:
@@ -792,7 +807,7 @@ def build_server() -> MCPServer:
                         kept += 1
         return {"directory": str(root), "downloaded": saved, "already_present": kept}
 
-    @server.tool(annotations=LOCAL_WRITE)
+    @tool(LOCAL_WRITE)
     def download_project_files(project: str, directory: str | None = None) -> dict[str, Any]:
         """Télécharger les pièces jointes d'un projet ou d'un TP (id ou partie du nom),
         dans DOSSIER/<projet>/. Défaut : ~/myges."""
@@ -810,7 +825,7 @@ def build_server() -> MCPServer:
                     kept += 1
         return {"project": found.name.strip(), "downloaded": saved, "already_present": kept}
 
-    @server.tool(annotations=LOCAL_WRITE)
+    @tool(LOCAL_WRITE)
     def export_agenda_ics(path: str, start: str | None = None, days: int = 30) -> dict[str, Any]:
         """Écrire l'emploi du temps dans un fichier iCalendar (.ics), à importer dans
         n'importe quel agenda."""

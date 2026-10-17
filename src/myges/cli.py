@@ -2640,12 +2640,32 @@ def mcp_command(
         bool,
         typer.Option("--install", help="Déclarer le serveur dans Claude Code (tous les dossiers)."),
     ] = False,
+    http: Annotated[
+        str | None,
+        typer.Option(
+            "--http",
+            metavar="HÔTE:PORT",
+            help="Serveur distant pour claude.ai (OAuth), en écoute locale derrière un "
+            "proxy HTTPS, ex. 127.0.0.1:8765.",
+        ),
+    ] = None,
+    public_url: Annotated[
+        str | None,
+        typer.Option(
+            "--public-url", help="Adresse HTTPS publique du proxy, ex. https://vps.exemple.ts.net."
+        ),
+    ] = None,
+    revoke: Annotated[
+        bool,
+        typer.Option("--revoke", help="Déconnecter tous les clients du serveur distant."),
+    ] = False,
 ) -> None:
     """Serveur MCP : demander à Claude « ma moyenne ? », « quelle salle pour Python ? »,
     « écris au prof que j'ai oublié Edusign »…
 
-    Lancé par le client MCP (Claude Code, Claude Desktop…), pas à la main. Même compte
-    que `myges login`. Lecture seule, sauf les brouillons d'e-mail (jamais envoyés).
+    Sans option, lancé par le client MCP (Claude Code, Claude Desktop…), pas à la main.
+    `--http` : serveur distant pour Claude sur le web et le mobile (lecture et brouillons
+    seulement, connexion par OAuth avec le compte myGES de cette machine).
     """
     import shutil
     import subprocess
@@ -2655,6 +2675,26 @@ def mcp_command(
     except ImportError:
         err.print(f"[red]Le module MCP n'est pas installé.[/] Installer : {escape(MCP_INSTALL)}")
         raise typer.Exit(1) from None
+    if revoke:
+        from .mcp_remote import revoke_all
+
+        console.print(f"{revoke_all()} jeton(s) invalidé(s) : les clients devront se reconnecter.")
+        return
+    if http is not None:
+        if not public_url or not public_url.startswith("https://"):
+            raise typer.BadParameter("adresse HTTPS publique requise", param_hint="--public-url")
+        host, _, port = http.rpartition(":")
+        if not host or not port.isdigit():
+            raise typer.BadParameter("format attendu : hôte:port", param_hint="--http")
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            err.print("[yellow]![/] Écoute hors de la boucle locale : laisser le proxy exposer.")
+        if not _current_username():
+            raise _not_logged_in()
+        from .mcp_remote import run as serve_remote
+
+        console.print(f"Serveur MCP distant : {public_url.rstrip('/')}/mcp (écoute {http})")
+        serve_remote(http, public_url)
+        return
     if not install:
         from .mcp_server import main as serve_mcp
 

@@ -51,7 +51,8 @@ ou par e-mail : [alertes](https://github.com/Arnaudmyges/myges-api/blob/main/doc
 ## Assistant (Claude)
 
 « Quelle est ma moyenne ? », « En quelle salle est mon cours de Python ? », « Écris au prof
-que j'ai oublié Edusign » : pose tes questions à Claude grâce au serveur MCP,
+que j'ai oublié Edusign » : pose tes questions à Claude grâce au serveur MCP, dans Claude
+Code, Claude Desktop, ou sur le web et le mobile :
 [assistant](https://github.com/Arnaudmyges/myges-api/blob/main/docs/assistant.md).
 
 ## Google Calendar

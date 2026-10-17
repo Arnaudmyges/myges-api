@@ -137,6 +137,8 @@ le lien est affiché, à ouvrir sur une machine qui en a un.
 
 - [Assistant (MCP)](assistant.md) : `myges mcp` pour poser ses questions à Claude,
   `myges mcp --install` pour l'ajouter à Claude Code
+- `myges mcp --http 127.0.0.1:8765 --public-url https://…` : connecteur pour claude.ai et
+  le mobile (OAuth, lecture seule) ; `myges mcp --revoke` pour tout déconnecter
 
 ## Exploration de l'API
 

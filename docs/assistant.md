@@ -30,8 +30,7 @@ affiche le bloc à ajouter à la configuration du client :
 { "mcpServers": { "myges": { "command": "/chemin/vers/myges", "args": ["mcp"] } } }
 ```
 
-Le serveur tourne sur votre machine (pas sur claude.ai web ni mobile, qui demandent un
-serveur public sur Internet).
+Pour Claude sur le **web** et le **mobile**, voir plus bas : connecteur distant.
 
 ## Ce que Claude peut faire
 
@@ -61,6 +60,35 @@ chaque appel. Évitez de les autoriser « toujours ».
 
 Pas d'outil pour rejoindre ou quitter un groupe de projet : ces actions de l'API n'ont pas
 encore été vérifiées en conditions réelles.
+
+## Claude sur le web et le mobile (connecteur distant)
+
+claude.ai appelle ses connecteurs depuis les serveurs d'Anthropic : il faut un serveur
+joignable en HTTPS public, par exemple un VPS avec
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) (aucun port à ouvrir) :
+
+```bash
+myges login --save-password             # sur le serveur
+myges mcp --http 127.0.0.1:8765 --public-url https://mon-vps.tailnet.ts.net   # (service)
+sudo tailscale funnel --bg 8765         # expose https://mon-vps.tailnet.ts.net
+```
+
+Puis dans claude.ai : **Paramètres → Connecteurs → Ajouter un connecteur personnalisé**,
+adresse `https://mon-vps.tailnet.ts.net/mcp`. Claude ouvre une page de connexion servie par
+votre serveur : identifiant et mot de passe **myGES** du compte configuré sur le serveur.
+Le connecteur marche ensuite aussi dans l'appli mobile et Claude Desktop.
+
+Ce que le serveur distant protège :
+
+- **Connexion OAuth** : seul le compte myGES du serveur peut se connecter ; 5 échecs en
+  15 minutes bloquent la page 15 minutes.
+- **Adresses de retour** limitées à claude.ai et claude.com : un tiers ne peut pas
+  récupérer d'accès chez lui. La page de connexion rappelle qui demande l'accès : ne la
+  remplir que si vous venez de cliquer sur « Connecter ».
+- **Jetons** valables 1 h (renouvellement 30 jours, à usage unique), stockés hachés.
+  `myges mcp --revoke` déconnecte tout.
+- **Outils** : 27, lecture et brouillons d'e-mail seulement. Pas d'inscription, pas de
+  message de groupe, pas de téléchargement : pour ça, Claude Code ou Claude Desktop.
 
 ## Vie privée
 
