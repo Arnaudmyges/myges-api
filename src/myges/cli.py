@@ -2590,7 +2590,7 @@ app.command("serve", hidden=True)(serve)
 
 # ---------------------------------------------------------------- Assistant (MCP)
 
-MCP_INSTALL = 'pipx install --force "myges-api[cli,mcp]"'
+MCP_INSTALL = 'pipx install --force "myges-api[cli]"'
 
 
 @app.command("mcp")

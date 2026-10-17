@@ -212,4 +212,4 @@ def test_mcp_missing_module_hint_keeps_extras(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(builtins, "__import__", no_mcp)
     result = CliRunner().invoke(app, ["mcp"])
     assert result.exit_code == 1
-    assert "myges-api[cli,mcp]" in result.output
+    assert "myges-api[cli]" in result.output

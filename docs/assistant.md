@@ -12,10 +12,12 @@ ensuite ses questions en français :
 
 ## Installation
 
+Inclus dans l'installation habituelle (`pipx install "myges-api[cli]"`, voir
+[installation](installation.md)) :
+
 ```bash
-pipx install --force "myges-api[cli,mcp]"   # ajoute le module MCP
-myges login                                 # si ce n'est pas déjà fait
-myges mcp --install                         # déclare le serveur dans Claude Code
+myges login              # si ce n'est pas déjà fait
+myges mcp --install      # déclare le serveur dans Claude Code
 ```
 
 Ouvrir ensuite une nouvelle session Claude Code (`claude`) et poser une question. Au
@@ -50,8 +52,10 @@ Tout est en **lecture seule**. `draft_email` ouvre un brouillon dans Outlook sur
 (destinataire, objet et texte remplis) : rien ne part sans votre clic sur « Envoyer ».
 Sur une machine sans navigateur (SSH), Claude donne le lien du brouillon.
 
-Claude ne peut ni s'inscrire à un événement, ni déposer un fichier, ni rien modifier sur
-myGES : pour ça, les commandes `myges events subscribe` etc. restent à lancer vous-même.
+Le serveur MCP ne modifie rien sur myGES. Dans **Claude Code**, Claude peut en plus
+lancer lui-même les commandes `myges` dans le terminal, par exemple
+`myges events subscribe 4525` : Claude Code demande alors votre accord avant chaque
+commande, comme pour toute commande du terminal.
 
 ## Vie privée
 
