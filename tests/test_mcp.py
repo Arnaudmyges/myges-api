@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -42,8 +43,24 @@ def school_api(router: respx.MockRouter) -> None:
         ("/me/events", "getEvents"),
         ("/me/news", "getNews"),
         ("/me/news/4001", "getNewsItem"),
+        ("/me/news/banners", "getBanners"),
+        ("/me/2026/practicals", "getPracticals"),
+        ("/me/nextProjectSteps", "getNextProjectSteps"),
+        ("/me/projectGroups/520001/messages", "getProjectGroupMessages"),
+        ("/me/500001/syllabus", "getSyllabus"),
+        ("/me/500001/files", "getCourseFiles"),
+        ("/me/campus", "getCampuses"),
+        ("/me/schools", "getSchools"),
+        ("/me/partners", "getPartners"),
     ]:
         router.get(f"{API_URL}{path}").mock(return_value=httpx.Response(200, json=fixture(name)))
+    router.get(f"{API_URL}/me/2026/absences").mock(return_value=httpx.Response(204))
+    router.get(url__regex=rf"{API_URL}/me/500001/files/\d+").mock(
+        return_value=httpx.Response(200, content=b"%PDF-1.4 support")
+    )
+    router.get(f"{API_URL}/me/projectFiles/9001").mock(
+        return_value=httpx.Response(200, content=b"%PDF-1.4 sujet")
+    )
 
 
 async def call(name: str, **arguments: Any) -> Any:
@@ -65,14 +82,31 @@ async def call_error(name: str, **arguments: Any) -> str:
     return str(result.content[0].text)  # type: ignore[union-attr]
 
 
-async def test_tools_listed_and_read_only_except_draft() -> None:
+MYGES_WRITES = {"subscribe_event", "unsubscribe_event"}
+LOCAL_WRITES = {
+    "draft_email",
+    "cancel_pending_registration",
+    "download_course_files",
+    "download_project_files",
+    "export_agenda_ics",
+}
+
+
+async def test_tools_annotations() -> None:
+    """Lecture seule par défaut ; seules les inscriptions sont marquées « destructives »,
+    pour que le client MCP demande confirmation."""
     async with Client(build_server()) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    assert {"grades", "agenda", "next_class", "teachers", "draft_email"} <= set(tools)
+    assert len(tools) >= 30
+    assert set(tools) >= MYGES_WRITES | LOCAL_WRITES
     for name, tool in tools.items():
-        assert tool.annotations is not None
-        assert tool.annotations.read_only_hint is (name != "draft_email"), name
-    assert tools["draft_email"].annotations.destructive_hint is False  # type: ignore[union-attr]
+        hints = tool.annotations
+        assert hints is not None, name
+        assert tool.description, name
+        writes = name in MYGES_WRITES | LOCAL_WRITES
+        assert hints.read_only_hint is (not writes), name
+        if writes:
+            assert hints.destructive_hint is (name in MYGES_WRITES), name
 
 
 async def test_grades_overall_average(home: Path) -> None:
@@ -213,3 +247,197 @@ def test_mcp_missing_module_hint_keeps_extras(monkeypatch: pytest.MonkeyPatch) -
     result = CliRunner().invoke(app, ["mcp"])
     assert result.exit_code == 1
     assert "myges-api[cli]" in result.output
+
+
+# ---------------------------------------------------------------- Outils ajoutés
+
+
+async def test_school_tools(home: Path) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        school_api(router)
+        syllabus = await call("syllabus", course="reseaux")
+        files = await call("course_files")
+        practicals = await call("practicals")
+        deadlines = await call("next_deadlines")
+        messages = await call("project_messages", project="proxmox")
+        campuses = await call("campuses")
+        schools = await call("schools")
+        partners = await call("partners")
+        banners = await call("announcements")
+        classes = await call("classes")
+    assert syllabus["syllabus_name"] == "Réseaux avancés"
+    assert "links" not in syllabus
+    assert [f["file_id"] for f in files] == [610001, 610002]  # anglais : pas de documents
+    assert practicals[0]["name"] == "TP noté : pare-feu"
+    assert deadlines[0]["project_id"] == 24001
+    assert messages == {
+        "project": "Mise en place d'un cluster Proxmox",
+        "group": "Groupe 1",
+        "messages": [],
+    }
+    for listing in (campuses, schools, partners, banners):
+        assert listing
+    assert classes[0]["puid"] == 20001
+
+
+async def test_course_reference_errors(home: Path) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        school_api(router)
+        unknown = await call_error("syllabus", course="chimie")
+        ambiguous = await call_error("syllabus", course="T1")
+    assert "aucune matière" in unknown
+    assert "ambigu" in ambiguous
+    assert "500001" in ambiguous
+
+
+async def test_simulate_and_grade_needed(home: Path) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        school_api(router)
+        simulated = await call("simulate_average", simulated={"anglais": 11})
+        needed = await call("grade_needed", course="anglais", target=14)
+        out_of_range = await call_error("simulate_average", simulated={"anglais": 25})
+    # Réseaux 15.25 (coef 3) + anglais 11 (coef 1) → 14.1875
+    assert simulated["overall_average"] == pytest.approx(14.1875)
+    # 14 = (3 × 15.25 + x) / 4  →  x = 10.25
+    assert needed["needed"] == pytest.approx(10.25)
+    assert needed["reachable"] is True
+    assert "0–20" in out_of_range
+
+
+async def test_weekly_summary(home: Path) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        school_api(router)
+        summary = await call("weekly_summary")
+    assert summary["title"].startswith("myGES")
+    assert summary["text"]
+
+
+async def test_downloads_and_ics(home: Path, tmp_path: Path) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        school_api(router)
+        first = await call("download_course_files", directory=str(tmp_path / "dl"))
+        again = await call("download_course_files", directory=str(tmp_path / "dl"))
+        project = await call("download_project_files", project="24001", directory=str(tmp_path))
+        ics = await call("export_agenda_ics", path=str(tmp_path / "cours.ics"))
+        bad = await call_error("export_agenda_ics", path=str(tmp_path / "cours.txt"))
+    assert len(first["downloaded"]) == 2
+    assert again == {**again, "downloaded": [], "already_present": 2}
+    saved = Path(project["downloaded"][0])
+    assert saved.name == "Sujet.pdf"
+    assert saved.read_bytes() == b"%PDF-1.4 sujet"
+    assert not list(tmp_path.rglob("*.part"))
+    assert Path(ics["path"]).read_text().startswith("BEGIN:VCALENDAR")
+    assert ".ics" in bad
+
+
+# ---------------------------------------------------------------- Inscriptions
+
+
+@pytest.fixture
+def cli_runs(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Commandes `myges` lancées par les outils d'inscription (rien n'est exécuté)."""
+    import subprocess
+
+    runs: list[list[str]] = []
+
+    def fake_run(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        runs.append(args[3:])  # sans « python -m myges.cli »
+        return subprocess.CompletedProcess(args, 0, "Inscrit : test", "")
+
+    monkeypatch.setattr("myges.mcp_server.subprocess.run", fake_run)
+    return runs
+
+
+def events_with(**changes: dict[str, Any]) -> dict[str, Any]:
+    payload = copy.deepcopy(fixture("getEvents"))
+    for event in payload["result"]:
+        event.update(changes.get(str(event["event_id"]), {}))
+    return payload
+
+
+async def test_subscribe_runs_cli_only_when_needed(home: Path, cli_runs: list[list[str]]) -> None:
+    payload = fixture("getEvents")
+    event = payload["result"][0]
+    event_id = event["event_id"]
+    future = int((datetime.now(timezone.utc) + timedelta(days=3)).timestamp() * 1000)
+    past = int((datetime.now(timezone.utc) - timedelta(days=3)).timestamp() * 1000)
+    with respx.mock(assert_all_called=False) as router:
+        school_api(router)
+        route = router.get(f"{API_URL}/me/events")
+
+        route.mock(
+            return_value=httpx.Response(
+                200,
+                json=events_with(
+                    **{
+                        str(event_id): {
+                            "is_participant_subscribed": False,
+                            "end_subscription_date": future,
+                        }
+                    }
+                ),
+            )
+        )
+        done = await call("subscribe_event", event_id=event_id)
+
+        route.mock(
+            return_value=httpx.Response(
+                200, json=events_with(**{str(event_id): {"is_participant_subscribed": True}})
+            )
+        )
+        already = await call("subscribe_event", event_id=event_id)
+        leave = await call("unsubscribe_event", event_id=event_id)
+        assert leave["output"] == "Inscrit : test"  # sortie de la CLI simulée
+
+        route.mock(
+            return_value=httpx.Response(
+                200,
+                json=events_with(
+                    **{
+                        str(event_id): {
+                            "is_participant_subscribed": False,
+                            "end_subscription_date": past,
+                        }
+                    }
+                ),
+            )
+        )
+        closed = await call_error("subscribe_event", event_id=event_id)
+        not_in = await call("unsubscribe_event", event_id=event_id)
+        unknown = await call_error("subscribe_event", event_id=1)
+        # Aucune écriture directe sur l'API : tout passe par la CLI.
+        assert all(c.request.method == "GET" for c in router.calls)
+    assert done["output"] == "Inscrit : test"
+    assert "Déjà inscrit" in already["output"]
+    assert "Pas inscrit" in not_in["output"]
+    assert "closes" in closed
+    assert "introuvable" in unknown
+    assert cli_runs == [
+        ["events", "subscribe", str(event_id)],
+        ["events", "unsubscribe", str(event_id)],
+    ]
+
+
+async def test_cancel_pending(home: Path, cli_runs: list[list[str]]) -> None:
+    from myges import pending as pending_mod
+
+    nothing = await call("cancel_pending_registration", event_id=4525)
+    pending_mod.register([pending_mod.Pending(4525, "2026-10-16T12:00:00+02:00", 1, "x")])
+    listed = await call("pending_registrations")
+    await call("cancel_pending_registration", event_id=4525)
+    assert "Aucune" in nothing["output"]
+    assert listed == [{"event_id": 4525, "opens": "2026-10-16T12:00:00+02:00"}]
+    assert cli_runs == [["events", "cancel", "4525"]]
+
+
+async def test_cli_failure_becomes_tool_error(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr(
+        "myges.mcp_server.subprocess.run",
+        lambda args, **_: subprocess.CompletedProcess(args, 1, "", "Erreur : 403 EVENT_CLOSED"),
+    )
+    from myges import pending as pending_mod
+
+    pending_mod.register([pending_mod.Pending(4525, "2026-10-16T12:00:00+02:00", 1, "x")])
+    assert "EVENT_CLOSED" in await call_error("cancel_pending_registration", event_id=4525)
