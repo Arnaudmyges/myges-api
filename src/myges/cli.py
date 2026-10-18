@@ -693,8 +693,8 @@ MailOpt = Annotated[
     typer.Option(
         "--mail",
         metavar="QUI",
-        help="Préparer un e-mail dans Outlook : nom (ou partie), plusieurs séparés par des "
-        "virgules, « tous » pour toute la liste.",
+        help="Préparer un e-mail dans Outlook : nom (ou partie) ou adresse, plusieurs "
+        "séparés par des virgules, « tous » pour toute la liste.",
     ),
 ]
 SubjectOpt = Annotated[str, typer.Option("--subject", "-s", help="Objet de l'e-mail.")]
@@ -714,14 +714,18 @@ def _full_name(person: Any) -> str:
 def _pick_people(
     people: Sequence[Any], who: str, label: Callable[[Any], str] = _full_name
 ) -> list[Any]:
-    """Personnes désignées par ``who`` : « tous », ou des noms séparés par des virgules
-    (chaque nom doit en désigner exactement une ; ``label`` élargit la recherche)."""
+    """Personnes désignées par ``who`` : « tous », ou des noms ou adresses e-mail séparés
+    par des virgules (chacun doit en désigner exactement une ; ``label`` élargit la
+    recherche par nom)."""
     if _fold(who.strip()) in ("tous", "toutes", "all"):
         return list(people)
     chosen: list[Any] = []
     for ref in filter(None, (part.strip() for part in who.split(","))):
-        words = _fold(ref).split()
-        matches = [p for p in people if all(w in _fold(label(p)) for w in words)]
+        if "@" in ref:
+            matches = [p for p in people if (p.email or "").casefold() == ref.casefold()]
+        else:
+            words = _fold(ref).split()
+            matches = [p for p in people if all(w in _fold(label(p)) for w in words)]
         if len(matches) != 1:
             if matches:
                 err.print(f"[red]« {ref} » est ambigu[/], préciser parmi :")

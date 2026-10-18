@@ -230,3 +230,15 @@ def test_serve_bad_address_keeps_previous_config(home: Path) -> None:
     assert result.exit_code == 1
     assert "Impossible d'écouter" in result.output
     assert json.loads(path.read_text())["serve"] == {"url": "http://100.64.0.1:2587", "token": "t"}
+
+
+def test_mail_by_email_address(home: Path, no_browser: list[str]) -> None:
+    with respx.mock(assert_all_called=False) as router:
+        people_api(router)
+        exact = runner.invoke(app, ["teachers", "--mail", "GHopper@example.org, lovelace"])
+        unknown = runner.invoke(app, ["teachers", "--mail", "inconnu@example.org"])
+    assert exact.exit_code == 0, exact.output
+    assert parse_qs(urlsplit(no_browser[0]).query)["to"] == [
+        "ghopper@example.org,alovelace@example.org"
+    ]
+    assert unknown.exit_code == 2
