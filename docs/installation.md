@@ -12,6 +12,14 @@ sudo apt install pipx
 pipx ensurepath
 ```
 
+**Linux (Arch, Omarchy, Manjaro…)** : pas d'`apt` ici, c'est `pacman`. Si `uv` est déjà
+installé (c'est le cas sur Omarchy), il remplace pipx : voir [Avec uv](#avec-uv-sans-pipx).
+
+```bash
+sudo pacman -S python-pipx
+pipx ensurepath
+```
+
 **macOS**
 
 ```bash
@@ -35,6 +43,26 @@ Dans un **nouveau terminal** :
 pipx install "myges-api[cli]"
 myges login
 ```
+
+## Avec uv (sans pipx)
+
+[uv](https://docs.astral.sh/uv/) fait la même chose que pipx. Pratique quand pipx n'est pas
+disponible, par exemple sur Omarchy où `uv` est fourni d'office :
+
+```bash
+uv tool install "myges-api[cli]"
+myges login
+```
+
+Si `myges` est introuvable ensuite : `uv tool update-shell`, puis ouvrir un nouveau terminal.
+
+Équivalents des commandes pipx de cette page :
+
+| pipx | uv |
+|---|---|
+| `pipx upgrade myges-api` | `uv tool upgrade myges-api` |
+| `pipx inject myges-api google-auth` | `uv tool install --with google-auth "myges-api[cli]"` |
+| `pipx uninstall myges-api` | `uv tool uninstall myges-api` |
 
 ## Mise à jour
 

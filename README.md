@@ -28,7 +28,7 @@ pipx install "myges-api[cli]"
 myges login
 ```
 
-macOS, Windows, mise à jour : [installation](https://github.com/Arnaudmyges/myges-api/blob/main/docs/installation.md).
+macOS, Windows, Arch / Omarchy (uv), mise à jour : [installation](https://github.com/Arnaudmyges/myges-api/blob/main/docs/installation.md).
 
 ## Utilisation
 
