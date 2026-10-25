@@ -44,7 +44,6 @@ from .models import AgendaEvent
 
 app = typer.Typer(
     help="Client en ligne de commande pour l'API myGES / Kordis (non officielle).",
-    no_args_is_help=True,
     rich_markup_mode="markdown",
 )
 console = Console()
@@ -57,8 +56,9 @@ def _show_version(value: bool) -> None:
         raise typer.Exit()
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def _root(
+    ctx: typer.Context,
     version: Annotated[
         bool,
         typer.Option(
@@ -66,8 +66,32 @@ def _root(
         ),
     ] = False,
 ) -> None:
-    """Client en ligne de commande pour l'API myGES / Kordis (non officielle)."""
+    """Client en ligne de commande pour l'API myGES / Kordis (non officielle).
+
+    Lancé seul dans un terminal, `myges` ouvre le menu interactif.
+    """
+    if ctx.invoked_subcommand is None:
+        # Comme cswap ou lazygit : le menu dans un terminal, l'aide pour un script ou un
+        # pipe (qui gardent le même code de sortie qu'avant).
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            _open_menu()
+        help_text = ctx.get_help()  # Typer l'affiche lui-même en mode Rich
+        if help_text:
+            typer.echo(help_text)
+        raise typer.Exit(2)
     _hint_new_version()
+
+
+def _open_menu() -> None:
+    try:
+        from .tui import run
+    except ImportError as exc:  # pragma: no cover - installation sans Textual
+        err.print(
+            f"[red]Le menu nécessite Textual[/] ({escape(str(exc))}) : "
+            "pipx upgrade myges-api (ou pip install -U 'myges-api[cli]')."
+        )
+        raise typer.Exit(1) from exc
+    raise typer.Exit(run())
 
 
 def _hint_new_version() -> None:
@@ -345,6 +369,15 @@ def _install_completion() -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
+
+
+@app.command()
+def menu() -> None:
+    """Menu interactif plein écran : agenda, notes, projets… (aussi : `myges` seul)."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        err.print("[red]Le menu a besoin d'un terminal interactif.[/]")
+        raise typer.Exit(2)
+    _open_menu()
 
 
 @app.command()

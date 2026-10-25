@@ -27,8 +27,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# La CLI inclut le serveur MCP (`myges mcp`) : une seule commande d'installation.
-cli = ["typer>=0.12", "rich>=13", "mcp>=2.3,<3"]
+# La CLI inclut le serveur MCP (`myges mcp`) et le menu interactif (`myges` seul) :
+# une seule commande d'installation.
+cli = ["typer>=0.12", "rich>=13", "mcp>=2.3,<3", "textual>=8.2,<9"]
 gcal = ["google-auth>=2.20"]
 mcp = ["myges-api[cli]"]  # ancien nom, gardé pour les commandes déjà publiées
 

@@ -4,6 +4,35 @@
 commandes de consultation acceptent `--json` (sortie brute) et, quand c'est pertinent,
 `-y 2025` pour une autre année scolaire.
 
+## Menu interactif
+
+```bash
+myges                            # dans un terminal : ouvre le menu
+myges menu                       # même chose, explicitement
+```
+
+En haut : le cours en cours (ou le prochain et dans combien de temps), la moyenne générale
+et la prochaine échéance de projet. À gauche, les sections : Aujourd'hui, Semaine, Notes,
+Absences, Matières, Projets et TP, Échéances, Actualités, Événements, Intervenants.
+
+| Touche | Effet |
+| --- | --- |
+| ↑ ↓ (ou j k) | changer de section, ou de ligne dans un tableau |
+| Entrée ou → | entrer dans le tableau ; sur une ligne : ouvrir son détail |
+| Échap ou ← | revenir au menu, fermer un détail |
+| `[` `]`, `t` | Semaine : semaine précédente, suivante, revenir à cette semaine |
+| Entrée, `x` | Notes : simuler une note (la moyenne générale se recalcule), tout effacer |
+| `r` | actualiser (tout recharger depuis myGES) |
+| Ctrl+P | palette : thème clair ou sombre (retenu), raccourcis |
+| `q` | quitter |
+
+Le détail d'une ligne : le syllabus d'une matière, le groupe, les étapes et le chat d'un
+projet, le texte d'une actualité ou d'un événement. Sur un intervenant, Entrée copie son
+e-mail. Sans session ouverte, le menu demande identifiant et mot de passe (comme
+`myges login`).
+
+Dans un script, un pipe ou une tâche planifiée, `myges` seul affiche l'aide comme avant.
+
 ## Session
 
 ```bash

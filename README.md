@@ -32,7 +32,12 @@ macOS, Windows, Arch / Omarchy (uv), mise à jour : [installation](https://githu
 
 ## Utilisation
 
+Tape simplement `myges` : un menu plein écran s'ouvre, avec ton prochain cours, ta moyenne,
+ta prochaine échéance, et tout le reste au clavier (agenda à la semaine, notes avec
+simulation, projets, syllabus, actualités…).
+
 ```bash
+myges                        # le menu interactif
 myges next                   # ton prochain cours, salle, prof
 myges agenda                 # la semaine
 myges grades                 # tes notes
