@@ -9,6 +9,7 @@ valide (~6 jours). Pour un usage non interactif, ``MYGES_USERNAME`` / ``MYGES_PA
 from __future__ import annotations
 
 import contextlib
+import functools
 import itertools
 import json
 import os
@@ -17,6 +18,7 @@ import sys
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, TypeVar
@@ -914,7 +916,46 @@ ProjectMessage = Annotated[
         help="Avec --inspect : poster TEXTE dans le chat de mon groupe (visible par le groupe).",
     ),
 ]  # fmt: skip
+ProjectUpload = Annotated[
+    list[Path] | None,
+    typer.Option(
+        "--upload", metavar="FICHIER",
+        help="Avec --inspect : déposer FICHIER comme livrable de mon groupe (répétable). "
+        "Visible par l'intervenant et le groupe.",
+        exists=True, dir_okay=False, readable=True,
+    ),
+]  # fmt: skip
+ProjectStep = Annotated[
+    int | None,
+    typer.Option(
+        "--step", metavar="N",
+        help="Avec --upload : numéro de l'étape (défaut : la seule, ou la prochaine échéance).",
+    ),
+]  # fmt: skip
+ProjectTitle = Annotated[
+    str | None,
+    typer.Option(
+        "--title", metavar="TEXTE",
+        help="Avec --upload d'un seul fichier : intitulé du livrable (défaut : nom du fichier).",
+    ),
+]  # fmt: skip
+ProjectDescription = Annotated[
+    str,
+    typer.Option("--description", metavar="TEXTE", help="Avec --upload : description du livrable."),
+]
+YesOpt = Annotated[bool, typer.Option("--yes", help="Ne pas demander confirmation avant le dépôt.")]
 CHAT_LINES = 10  # derniers messages affichés par --inspect
+
+
+@dataclass
+class _Upload:
+    """Options de dépôt de livrables (``--upload`` et ses compagnes)."""
+
+    files: list[Path]
+    step: int | None = None
+    title: str | None = None
+    description: str = ""
+    yes: bool = False
 
 
 def _my_group(project: Any, uid: int) -> Any:
@@ -934,13 +975,22 @@ def _next_deadline(project: Any, now: datetime) -> datetime | None:
 def _projects_command(
     label: str, items: list[Any], uid: int, catalog: _Courses,
     inspect: str | None, download: Path | None, client: MyGES,
-    message: str | None = None,
+    message: str | None = None, upload: _Upload | None = None,
 ) -> None:  # fmt: skip
     now = datetime.now(_TZ)
     if message is not None and inspect is None:
         raise typer.BadParameter("à utiliser avec --inspect PROJET", param_hint="--message")
+    if upload is not None and not upload.files:
+        if upload.step is not None or upload.title or upload.description:
+            hint = "--step/--title/--description"
+            raise typer.BadParameter("à utiliser avec --upload FICHIER", param_hint=hint)
+        upload = None
+    if upload is not None and inspect is None:
+        raise typer.BadParameter("à utiliser avec --inspect PROJET", param_hint="--upload")
+    if upload is not None and upload.title and len(upload.files) > 1:
+        raise typer.BadParameter("un seul fichier avec --title", param_hint="--title")
     if inspect is not None:
-        return _inspect_project(items, inspect, uid, download, client, message)
+        return _inspect_project(items, inspect, uid, download, client, message, upload)
     _table(
         label,
         items,
@@ -975,13 +1025,19 @@ def _find_project(items: list[Any], ref: str) -> Any:
 
 def _inspect_project(
     items: list[Any], ref: str, uid: int, download: Path | None, client: MyGES,
-    message: str | None = None,
+    message: str | None = None, upload: _Upload | None = None,
 ) -> None:  # fmt: skip
     project = _find_project(items, ref)
     group = _my_group(project, uid)
     if message is not None and group is None:
         err.print("[red]Pas de groupe pour ce projet : message non envoyé.[/]")
         raise typer.Exit(2)
+    if upload is not None:
+        if group is None:
+            err.print("[red]Pas de groupe pour ce projet : rien n'est déposé.[/]")
+            raise typer.Exit(2)
+        project = _upload_deliverables(client, project, group, upload)
+        group = _my_group(project, uid)
     console.print(f"[bold]{project.name.strip()}[/]")
     console.print(f"{project.course_name} · {project.author or '—'}")
     if group is None:
@@ -1014,7 +1070,9 @@ def _inspect_project(
             console.print(_html_to_text(step.psp_desc))
         delivered = [f for f in step.files or [] if group and f.pgr_id == group.project_group_id]
         for f in delivered:
-            console.print(f"  [green]déposé[/] : {f.psf_name} ({_fmt_dt(f.psf_end_upload)})")
+            console.print(
+                f"  [green]déposé[/] : {escape(f.psf_name or '?')} ({_fmt_dt(f.psf_end_upload)})"
+            )
     files = project.project_files or []
     if files:
         console.print("\n[bold]Pièces jointes[/]")
@@ -1038,6 +1096,110 @@ def _inspect_project(
             console.print(f"[green]↓[/] {dest}")
         if not files:
             console.print("[dim]Aucune pièce jointe à télécharger.[/]")
+
+
+def _size(n: int) -> str:
+    for unit in ("o", "Ko", "Mo"):
+        if n < 1024 or unit == "Mo":
+            return f"{n:.0f} {unit}" if unit == "o" else f"{n:.1f} {unit}".replace(".", ",")
+        n /= 1024  # type: ignore[assignment]
+    return ""  # pragma: no cover
+
+
+def _upload_step(project: Any, number: int | None, now: datetime) -> Any:
+    """Étape visée par ``--upload`` : ``--step N``, sinon la seule, sinon la prochaine échéance."""
+    steps = project.steps or []
+    if number is not None:
+        candidates = [s for s in steps if s.psp_number == number]
+    elif len(steps) == 1:
+        candidates = steps
+    else:
+        candidates = [s for s in steps if s.psp_limit_date and s.psp_limit_date >= now]
+    if not candidates:
+        err.print(
+            f"[red]Aucune étape n°{number}.[/]" if number is not None
+            else "[red]Plusieurs étapes et aucune échéance à venir : préciser --step N.[/]"
+        )  # fmt: skip
+        for s in steps:
+            err.print(f"  {s.psp_number}  {s.psp_type} — {_fmt_dt(s.psp_limit_date)}")
+        raise typer.Exit(2)
+    upcoming = [s for s in candidates if s.psp_limit_date and s.psp_limit_date >= now]
+    far = datetime.max.replace(tzinfo=_TZ)
+    return min(upcoming or candidates, key=lambda s: s.psp_limit_date or far)
+
+
+def _advance(bar: Any, task: Any, sent: int, _total: int) -> None:
+    bar.update(task, completed=sent)
+
+
+def _upload_deliverables(client: MyGES, project: Any, group: Any, upload: _Upload) -> Any:
+    """Dépose les fichiers par le site myges.fr, vérifie par l'API, renvoie le projet relu."""
+    from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn
+
+    from .web import MyGESWeb
+
+    now = datetime.now(_TZ)
+    step = _upload_step(project, upload.step, now)
+    username = _current_username()
+    if not username:
+        err.print("[red]Le dépôt passe par le site myges.fr : lancer d'abord `myges login`.[/]")
+        raise typer.Exit(2)
+    members = ", ".join(f"{st.firstname} {st.name}" for st in group.project_group_students or [])
+    console.print(
+        f"[bold]Dépôt[/] sur « {escape(project.name.strip())} », {escape(group.group_name or '')}"
+        f", étape {step.psp_number} · {escape(step.psp_type or '')}"
+        + (f" (avant le {_fmt_dt(step.psp_limit_date)})" if step.psp_limit_date else "")
+    )
+    for path in upload.files:
+        console.print(f"  {escape(path.name)}  [dim]{_size(path.stat().st_size)}[/]")
+    console.print(f"[dim]Visible par l'intervenant et le groupe ({escape(members)}).[/]")
+    if step.psp_limit_date and step.psp_limit_date < now:
+        console.print("[yellow]![/] La date limite de cette étape est dépassée.")
+    if not upload.yes and not typer.confirm("Déposer ?", default=False):
+        raise typer.Exit(1)
+
+    password = _current_password() or typer.prompt("Mot de passe myGES", hide_input=True)
+    done: list[tuple[Path, str]] = []
+    try:
+        with MyGESWeb(username, password, allow_writes=True) as web:
+            for path in upload.files:
+                with Progress(
+                    TextColumn("{task.description}"), BarColumn(), DownloadColumn(),
+                    console=console, transient=True,
+                ) as bar:  # fmt: skip
+                    task = bar.add_task(f"↑ {escape(path.name)}", total=path.stat().st_size)
+                    result = web.upload_step_file(
+                        group.project_group_id, path,
+                        step_number=step.psp_number or 1, deadline=step.psp_limit_date,
+                        title=upload.title, description=upload.description,
+                        progress=functools.partial(_advance, bar, task),
+                    )  # fmt: skip
+                done.append((path, result.md5))
+                said = " ; ".join(result.messages)
+                note = f" [dim]({escape(said)})[/]" if said else ""
+                console.print(f"[green]↑[/] {escape(path.name)} déposé{note}")
+    except MyGESError as exc:
+        err.print(f"[red]Échec du dépôt :[/] {escape(str(exc))}")
+        if done:
+            err.print("Déjà déposés : " + ", ".join(p.name for p, _ in done))
+        raise typer.Exit(1) from exc
+
+    fresh = client.project(project.project_id)
+    hashes = {
+        f.psf_file_hash
+        for s in fresh.steps or [] if s.psp_id == step.psp_id
+        for f in s.files or [] if f.pgr_id == group.project_group_id
+    }  # fmt: skip
+    missing = [p for p, md5 in done if md5 not in hashes]
+    if missing:
+        err.print(
+            "[yellow]![/] Pas encore visible(s) dans l'API : "
+            + ", ".join(p.name for p in missing)
+            + " — vérifier sur myges.fr."
+        )
+    else:
+        console.print("[green]✓[/] Vérifié dans myGES (empreinte MD5 identique).\n")
+    return fresh
 
 
 def _group_chat(client: MyGES, group_id: int, message: str | None) -> None:
@@ -1064,6 +1226,11 @@ def projects(
     inspect: ProjectInspect = None,
     download: ProjectDownload = None,
     message: ProjectMessage = None,
+    upload: ProjectUpload = None,
+    step: ProjectStep = None,
+    title: ProjectTitle = None,
+    description: ProjectDescription = "",
+    yes: YesOpt = False,
     json_: JsonOpt = False,
 ) -> None:
     """Projets de groupe : mon groupe et la prochaine échéance ; `--inspect` pour le détail."""
@@ -1073,8 +1240,9 @@ def projects(
             return _dump(data)
         catalog = _Courses(client, year)
         _projects_command(
-            "Projets", data, client.profile().uid, catalog, inspect, download, client, message
-        )
+            "Projets", data, client.profile().uid, catalog, inspect, download, client, message,
+            _Upload(upload or [], step, title, description, yes),
+        )  # fmt: skip
 
 
 @app.command()
@@ -1083,6 +1251,11 @@ def practicals(
     inspect: ProjectInspect = None,
     download: ProjectDownload = None,
     message: ProjectMessage = None,
+    upload: ProjectUpload = None,
+    step: ProjectStep = None,
+    title: ProjectTitle = None,
+    description: ProjectDescription = "",
+    yes: YesOpt = False,
     json_: JsonOpt = False,
 ) -> None:
     """Travaux pratiques (TP) : mon groupe et la prochaine échéance ; `--inspect` pour le détail."""
@@ -1092,8 +1265,9 @@ def practicals(
             return _dump(data)
         catalog = _Courses(client, year)
         _projects_command(
-            "TP", data, client.profile().uid, catalog, inspect, download, client, message
-        )
+            "TP", data, client.profile().uid, catalog, inspect, download, client, message,
+            _Upload(upload or [], step, title, description, yes),
+        )  # fmt: skip
 
 
 @app.command()

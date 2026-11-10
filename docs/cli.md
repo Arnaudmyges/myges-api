@@ -81,9 +81,19 @@ myges projects                              # mon groupe et la prochaine échéa
 myges projects --inspect 24134              # (id ou nom) groupe, membres, consignes, pièces jointes, chat
 myges projects --inspect proxmox --download # + télécharger les pièces jointes
 myges projects --inspect proxmox -m "Dispo jeudi pour la démo ?"   # poster dans le chat du groupe
+myges projects --inspect proxmox --upload dossier.pdf --upload configs.tar.gz  # déposer des livrables
+myges projects --inspect 22234 --upload rapport.pdf --step 3 --title "Rapport T3" --description "v2"
 myges practicals                            # TP, mêmes options
 myges steps                      # prochaines échéances
 ```
+
+`--upload` dépose le fichier dans **mon groupe**, sur l'étape `--step N`, ou par défaut sur la
+seule étape du projet, sinon sur la prochaine échéance. Il demande confirmation (`--yes` pour
+s'en passer), puis vérifie par l'API que le fichier est arrivé intact (empreinte MD5). Le
+livrable est visible par l'intervenant et par le groupe, et se supprime depuis le site. L'API
+mobile ne sait pas déposer : la commande passe par le site `myges.fr`, qui demande le **mot de
+passe**. Elle prend celui enregistré par `myges login --save-password` ou `MYGES_PASSWORD`,
+sinon elle le demande. Limite du site : 300 Mo par fichier, extension obligatoire.
 
 ## Blocs et simulation de notes
 

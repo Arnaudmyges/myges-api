@@ -134,3 +134,31 @@ Observé en réel à l'ouverture des inscriptions du « Cloud Day » (12:00) :
   `message`, `date` (epoch ms), `is_deleted`, `deletion_date`.
 - Aucune route de suppression connue : un message posté reste.
 
+## 2026-11-10 — Dépôt de livrables (site web)
+
+- L'API n'a **aucune route d'envoi**. Sondées en `GET` (un `405` aurait trahi un `POST`) :
+  `/me/projectGroups/{id}/…`, `/me/projectSteps/{id}/…`, `/me/projects/{id}/steps/…`,
+  `/me/courses/{rc_id}/projects/{id}/groups/{id}/…` (`files`, `upload`, `stepFiles`…) : `404`.
+  Seule trouvée : `GET /me/projectStepFiles/{psf_id}`, qui répond `400` « pas accès » sur le
+  livrable d'un autre groupe (sans doute le téléchargement d'un livrable).
+- Le site le fait depuis `myges.fr/common/project-group-gestion/{project_group_id}` (JSF +
+  PrimeFaces 5.1, session CAS sur `ges-cas.kordis.fr`, mot de passe obligatoire) :
+  1. un onglet par étape (« Etape n°X »), chargé à la demande (`tabListStep_contentLoad`) ;
+     seul le premier est dans la page ;
+  2. « Ajouter un livrable » (`tabListStep:{i}:addStepFileButton`) rend le panneau d'ajout :
+     intitulé (70 caractères maximum), description ;
+  3. le fichier part en `POST /event/chunkupload` (jQuery File Upload 5.37) : champ `files[]`
+     et `hashes` = MD5 du fichier entier. Jusqu'à 2 Mo, une seule requête ; au-delà, des
+     morceaux de 2 Mo avec `Content-Range` et `Content-Disposition`. Réponse :
+     `{"files": [{"hash", "path", "type", "extension"}]}` ;
+  4. `saveStepFile` (`remoteCommand`) reçoit ces quatre valeurs, puis « Valider le livrable »
+     (`saveDocument`) enregistre avec l'intitulé et la description.
+- Vérifié en réel sur le projet 24224 (un `.tar.gz` de 15 Ko en une requête, un PDF de 2,6 Mo
+  en deux morceaux) : `psf_file_hash` et `psf_file_size` de l'API sont identiques au fichier
+  local, et l'historique du groupe affiche « a envoyé le livrable ». L'extension retenue est
+  la dernière (`.gz` pour un `.tar.gz`).
+- Plusieurs livrables par étape et par groupe sont acceptés (jusqu'à 17 observés).
+  Suppression : « Supprimer le livrable » (`btDelete`) puis « Oui » dans la confirmation ;
+  l'historique garde « a supprimé le livrable ».
+- Taille maximale annoncée : 300 Mo. Un nom de fichier sans extension, ou avec une extension
+  de plus de 10 caractères, est refusé par le navigateur avant tout envoi.
