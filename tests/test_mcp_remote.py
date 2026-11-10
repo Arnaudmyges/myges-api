@@ -241,6 +241,8 @@ def test_full_flow_then_tools(server: TestClient) -> None:
         "subscribe_event",
         "unsubscribe_event",
         "send_project_message",
+        "upload_deliverable",
+        "delete_deliverable",
         "download_course_files",
         "export_agenda_ics",
         "cancel_pending_registration",

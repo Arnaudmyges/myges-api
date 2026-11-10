@@ -28,7 +28,7 @@ def test_operation_is_documented(operation_id: str) -> None:
 
 
 def test_every_read_operation_has_a_fixture() -> None:
-    binary = {"authorize", "downloadCourseFile", "downloadProjectFile"}
+    binary = {"authorize", "downloadCourseFile", "downloadProjectFile", "downloadProjectStepFile"}
     reads = {op for op, (method, _) in operations().items() if method == "get"} - binary
     assert reads == set(FIXTURE_OPS)
 

@@ -61,6 +61,9 @@ def school_api(router: respx.MockRouter) -> None:
     router.get(f"{API_URL}/me/projectFiles/9001").mock(
         return_value=httpx.Response(200, content=b"%PDF-1.4 sujet")
     )
+    router.get(f"{API_URL}/me/projectStepFiles/88001").mock(
+        return_value=httpx.Response(200, content=b"%PDF-1.4 rendu")
+    )
 
 
 async def call(name: str, **arguments: Any) -> Any:
@@ -82,7 +85,13 @@ async def call_error(name: str, **arguments: Any) -> str:
     return str(result.content[0].text)  # type: ignore[union-attr]
 
 
-MYGES_WRITES = {"subscribe_event", "unsubscribe_event", "send_project_message"}
+MYGES_WRITES = {
+    "subscribe_event",
+    "unsubscribe_event",
+    "send_project_message",
+    "upload_deliverable",
+    "delete_deliverable",
+}
 LOCAL_WRITES = {
     "draft_email",
     "cancel_pending_registration",
@@ -175,6 +184,15 @@ async def test_news_and_projects(home: Path) -> None:
     assert found[0]["news_id"] == 4001
     assert item["text"] == "Contenu de l'actualité."
     assert projects[0]["name"] == "Mise en place d'un cluster Proxmox"
+    assert projects[0]["deliverables"] == [
+        {
+            "id": 88001,
+            "name": "rapport.pdf",
+            "step": 1,
+            "uploaded": projects[0]["deliverables"][0]["uploaded"],
+            "size": 204800,
+        }
+    ]
 
 
 async def test_draft_email_never_sends(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -320,9 +338,11 @@ async def test_downloads_and_ics(home: Path, tmp_path: Path) -> None:
         bad = await call_error("export_agenda_ics", path=str(tmp_path / "cours.txt"))
     assert len(first["downloaded"]) == 2
     assert again == {**again, "downloaded": [], "already_present": 2}
-    saved = Path(project["downloaded"][0])
+    saved, rendu = (Path(p) for p in project["downloaded"])
     assert saved.name == "Sujet.pdf"
     assert saved.read_bytes() == b"%PDF-1.4 sujet"
+    assert rendu.relative_to(saved.parent) == Path("Livrables/rapport.pdf")
+    assert rendu.read_bytes() == b"%PDF-1.4 rendu"
     assert not list(tmp_path.rglob("*.part"))
     assert Path(ics["path"]).read_text().startswith("BEGIN:VCALENDAR")
     assert ".ics" in bad
@@ -468,3 +488,29 @@ async def test_send_project_message_goes_through_cli(home: Path, cli_runs: list[
         ["projects", "--inspect", "24001", "--message", "Dispo jeudi ?"],
         ["practicals", "--inspect", practical_id, "--message", "ok"],
     ]
+
+
+async def test_deliverables_go_through_cli(
+    home: Path, tmp_path: Path, cli_runs: list[list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = tmp_path / "rapport v2.pdf"
+    report.write_bytes(b"%PDF")
+    with respx.mock(assert_all_called=False) as router:
+        school_api(router)
+        no_password = await call_error("upload_deliverable", project="proxmox", path=str(report))
+        monkeypatch.setenv("MYGES_PASSWORD", "secret")
+        missing = await call_error("upload_deliverable", project="proxmox", path="/nope.pdf")
+        no_group = await call_error("delete_deliverable", project="pare-feu", deliverable="x")
+        await call(
+            "upload_deliverable", project="proxmox", path=str(report), step=1, title="Rapport"
+        )
+        await call("delete_deliverable", project="24001", deliverable="88001")
+        assert all(c.request.method == "GET" for c in router.calls)
+    assert "--save-password" in no_password
+    assert "introuvable" in missing
+    assert "aucun groupe" in no_group
+    assert cli_runs == [
+        ["projects", "--inspect", "24001", "--upload", str(report.resolve()),
+         "--step", "1", "--title", "Rapport", "--yes"],
+        ["projects", "--inspect", "24001", "--delete", "88001", "--yes"],
+    ]  # fmt: skip

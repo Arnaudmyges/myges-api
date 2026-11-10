@@ -165,5 +165,8 @@ Observé en réel à l'ouverture des inscriptions du « Cloud Day » (12:00) :
   pages suivantes par `{table}_pagination`/`_first`/`_rows`). Les lignes ne portent pas le
   `psf_id` : on les reconnaît au nom et à l'heure de début d'envoi, affichée à la seconde en
   heure de Paris (`psf_begin_upload`).
+- `GET /me/projectStepFiles/{psf_id}` est bien le **téléchargement** d'un livrable de son
+  groupe : contenu brut, identique au fichier déposé (MD5 = `psf_file_hash`), même
+  `Content-Type: application/json` erroné que les autres fichiers, sans `Content-Disposition`.
 - Taille maximale annoncée : 300 Mo. Un nom de fichier sans extension, ou avec une extension
   de plus de 10 caractères, est refusé par le navigateur avant tout envoi.

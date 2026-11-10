@@ -396,6 +396,10 @@ class MyGES(_BaseClient):
         """Contenu d'un fichier de projet (``ProjectFile.pf_id``), ex. cahier des charges."""
         return self._content(self._send("GET", f"/me/projectFiles/{file_id}"))
 
+    def download_step_file(self, file_id: int) -> bytes:
+        """Contenu d'un livrable de mon groupe (``ProjectStepFile.psf_id``)."""
+        return self._content(self._send("GET", f"/me/projectStepFiles/{file_id}"))
+
     def project_group_messages(self, group_id: int) -> list[m.ProjectGroupMessage]:
         """Chat du groupe, du plus ancien au plus récent."""
         return _sent_order(
@@ -660,6 +664,9 @@ class AsyncMyGES(_BaseClient):
 
     async def download_project_file(self, file_id: int) -> bytes:
         return self._content(await self._send("GET", f"/me/projectFiles/{file_id}"))
+
+    async def download_step_file(self, file_id: int) -> bytes:
+        return self._content(await self._send("GET", f"/me/projectStepFiles/{file_id}"))
 
     async def project_group_messages(self, group_id: int) -> list[m.ProjectGroupMessage]:
         result = await self._get(f"/me/projectGroups/{group_id}/messages")

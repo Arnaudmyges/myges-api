@@ -614,6 +614,36 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /me/projectStepFiles/{fileId}:
+    get:
+      tags: [Projets]
+      operationId: downloadProjectStepFile
+      summary: Télécharger un livrable de mon groupe
+      description: |
+        Contenu brut d'un livrable déposé sur une étape (`steps[].files[].psf_id`), identique
+        octet pour octet au fichier envoyé (MD5 = `psf_file_hash`). Le serveur annonce
+        `application/json` quel que soit le format, sans `Content-Disposition` : le nom vient
+        de `psf_name`. Un livrable d'un autre groupe répond `400`. Le dépôt et la
+        suppression n'existent pas dans l'API (seulement sur le site myges.fr).
+      x-verified: "2026-11-10"
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          description: "`psf_id` du livrable."
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Contenu du livrable (en-tête `Content-Type` erroné).
+          content:
+            application/json:
+              schema: { type: string, contentMediaType: application/octet-stream }
+            application/octet-stream:
+              schema: { type: string, contentMediaType: application/octet-stream }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /me/nextProjectSteps:
     get:
       tags: [Projets]

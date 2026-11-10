@@ -324,7 +324,15 @@ def test_project_inspect_and_download(home: Path, tmp_path: Path) -> None:
                 200, content=b"%PDF-sujet", headers={"content-type": "application/json"}
             )
         )
+        rendu = router.get(f"{API_URL}/me/projectStepFiles/88001").mock(
+            return_value=httpx.Response(
+                200, content=b"%PDF-rendu", headers={"content-type": "application/json"}
+            )
+        )
         result = CliRunner().invoke(
+            app, ["projects", "--inspect", "cluster proxmox", "--download", str(tmp_path)]
+        )
+        again = CliRunner().invoke(
             app, ["projects", "--inspect", "cluster proxmox", "--download", str(tmp_path)]
         )
     assert result.exit_code == 0, result.output
@@ -332,9 +340,25 @@ def test_project_inspect_and_download(home: Path, tmp_path: Path) -> None:
     assert "Rendu final" in result.output
     assert "Dépôt du rapport." in result.output
     assert "déposé : rapport.pdf" in result.output  # rendu déjà déposé par le groupe
-    saved = tmp_path / "Mise en place d'un cluster Proxmox" / "Sujet.pdf"
-    assert saved.read_bytes() == b"%PDF-sujet"
-    assert pdf.called
+    folder = tmp_path / "Mise en place d'un cluster Proxmox"
+    assert (folder / "Sujet.pdf").read_bytes() == b"%PDF-sujet"
+    # Le livrable de mon groupe, à part des pièces jointes ; pas retéléchargé ensuite.
+    assert (folder / "Livrables" / "rapport.pdf").read_bytes() == b"%PDF-rendu"
+    assert pdf.call_count == rendu.call_count == 1
+    assert "déjà présent" in again.output
+
+
+def test_deliverable_paths_keep_homonyms(tmp_path: Path) -> None:
+    from myges.cli import _deliverable_paths
+    from myges.models import Project
+
+    project = Project.model_validate(fixture("getProject")["result"])
+    step = project.steps[0]  # type: ignore[index]
+    first = step.files[0]  # type: ignore[index]
+    step.files.append(first.model_copy(update={"psf_id": 88002}))  # type: ignore[union-attr]
+    group = project.groups[0]
+    names = [dest.name for dest, _ in _deliverable_paths(project, group, tmp_path)]
+    assert names == ["rapport.pdf", "rapport (88002).pdf"]
 
 
 def test_project_inspect_unknown(home: Path) -> None:

@@ -906,7 +906,8 @@ ProjectDownload = Annotated[
     Path | None,
     typer.Option(
         "--download", metavar="[DOSSIER]",
-        help="Avec --inspect : télécharger les pièces jointes (défaut : dossier courant).",
+        help="Avec --inspect : télécharger les pièces jointes et les livrables de mon groupe "
+        "(défaut : dossier courant).",
     ),
 ]  # fmt: skip
 ProjectMessage = Annotated[
@@ -1104,18 +1105,23 @@ def _inspect_project(
         _group_chat(client, group.project_group_id, message)
     if download is not None:
         folder = download.expanduser() / _safe_name(project.name.strip())
-        for f in files:
-            dest = folder / _safe_name(f.filename)
+        targets: list[tuple[Path, Callable[[], bytes]]] = []
+        for pf in files:
+            attached = functools.partial(client.download_project_file, pf.pf_id)
+            targets.append((folder / _safe_name(pf.filename), attached))
+        for dest, f in _deliverable_paths(project, group, folder):
+            targets.append((dest, functools.partial(client.download_step_file, f.psf_id)))
+        for dest, fetch in targets:
             if dest.exists():
                 console.print(f"[dim]déjà présent : {dest}[/]")
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".part")
-            tmp.write_bytes(client.download_project_file(f.pf_id))
+            tmp.write_bytes(fetch())
             tmp.replace(dest)
             console.print(f"[green]↓[/] {dest}")
-        if not files:
-            console.print("[dim]Aucune pièce jointe à télécharger.[/]")
+        if not targets:
+            console.print("[dim]Ni pièce jointe ni livrable à télécharger.[/]")
 
 
 def _size(n: int) -> str:
@@ -1152,6 +1158,35 @@ def _advance(bar: Any, task: Any, sent: int, _total: int) -> None:
     bar.update(task, completed=sent)
 
 
+def _my_deliverables(project: Any, group: Any) -> list[tuple[Any, Any]]:
+    """(étape, livrable) déposés par mon groupe, toutes étapes confondues."""
+    if group is None:
+        return []
+    return [
+        (s, f)
+        for s in project.steps or []
+        for f in s.files or [] if f.pgr_id == group.project_group_id
+    ]  # fmt: skip
+
+
+def _deliverable_paths(project: Any, group: Any, folder: Path) -> list[tuple[Path, Any]]:
+    """Destination de chaque livrable de mon groupe : ``folder/Livrables/<nom>``.
+
+    Deux livrables de même nom (deux étapes, ou un fichier redéposé) gardent chacun le leur :
+    le second prend son id en suffixe.
+    """
+    taken: set[str] = set()
+    out = []
+    for _, f in sorted(_my_deliverables(project, group), key=lambda sf: sf[1].psf_id or 0):
+        name = _safe_name(f.psf_name or f"livrable-{f.psf_id}")
+        if name.lower() in taken:
+            stem, dot, ext = name.rpartition(".")
+            name = f"{stem} ({f.psf_id}).{ext}" if dot and stem else f"{name} ({f.psf_id})"
+        taken.add(name.lower())
+        out.append((folder / "Livrables" / name, f))
+    return out
+
+
 def _web_username() -> str:
     username = _current_username()
     if not username:
@@ -1162,11 +1197,7 @@ def _web_username() -> str:
 
 def _find_deliverables(project: Any, group: Any, refs: list[str]) -> list[tuple[Any, Any]]:
     """(étape, livrable) de mon groupe pour chaque référence : id, nom exact ou partie du nom."""
-    mine = [
-        (s, f)
-        for s in project.steps or []
-        for f in s.files or [] if f.pgr_id == group.project_group_id
-    ]  # fmt: skip
+    mine = _my_deliverables(project, group)
     found: list[tuple[Any, Any]] = []
     for ref in refs:
         ref = ref.strip()

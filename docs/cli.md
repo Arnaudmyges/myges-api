@@ -79,7 +79,7 @@ préférer le nom dans les scripts.
 ```bash
 myges projects                              # mon groupe et la prochaine échéance
 myges projects --inspect 24134              # (id ou nom) groupe, membres, consignes, pièces jointes, chat
-myges projects --inspect proxmox --download # + télécharger les pièces jointes
+myges projects --inspect proxmox --download # + pièces jointes, et livrables du groupe dans Livrables/
 myges projects --inspect proxmox -m "Dispo jeudi pour la démo ?"   # poster dans le chat du groupe
 myges projects --inspect proxmox --upload dossier.pdf --upload configs.tar.gz  # déposer des livrables
 myges projects --inspect 22234 --upload rapport.pdf --step 3 --title "Rapport T3" --description "v2"

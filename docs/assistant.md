@@ -43,19 +43,23 @@ Pour Claude sur le **web** et le **mobile**, voir plus bas : connecteur distant.
 | Notes | `grades` (moyennes par matière, par bloc, générale), `simulate_average` (« et si j'avais 14 en anglais ? »), `grade_needed` (« quelle note pour avoir 12 ? »), `absences` |
 | Matières | `courses`, `syllabus`, `course_files` (supports déposés) |
 | Personnes | `teachers` (avec leurs matières), `classmates` |
-| Projets, TP | `projects`, `practicals`, `next_deadlines`, `project_messages` (chat du groupe) |
+| Projets, TP | `projects`, `practicals` (dont les livrables déposés par votre groupe), `next_deadlines`, `project_messages` (chat du groupe) |
 | Vie de campus | `events`, `pending_registrations`, `news`, `read_news`, `announcements` |
 | Récapitulatif | `weekly_summary` (le même que `myges summary`) |
 
 **Fichiers sur la machine** (rien ne change sur myGES) : `download_course_files`,
-`download_project_files` (dans `~/myges` par défaut), `export_agenda_ics`,
+`download_project_files` (pièces jointes et livrables de votre groupe, dans `~/myges` par
+défaut), `export_agenda_ics`,
 `cancel_pending_registration`, et `draft_email` : un **brouillon** dans Outlook sur le
 web, rien ne part sans votre clic sur « Envoyer » (sans navigateur, Claude donne le lien).
 
 **Votre compte myGES** : `subscribe_event` (tout de suite si c'est ouvert, sinon
 pré-inscription à l'ouverture, en arrière-plan), `unsubscribe_event`, et
 `send_project_message` (poster dans le chat de votre groupe de projet, visible par tout le
-groupe). Ces outils sont marqués « destructifs » : le client MCP demande votre accord avant
+groupe), `upload_deliverable` et `delete_deliverable` (déposer ou supprimer un livrable de
+votre groupe, visible par l'intervenant et le groupe). Ces deux derniers passent par le site
+myges.fr, qui exige le mot de passe : enregistrez-le avec `myges login --save-password` (ou
+`MYGES_PASSWORD`), le serveur MCP ne peut pas le demander. Ces outils sont marqués « destructifs » : le client MCP demande votre accord avant
 chaque appel. Évitez de les autoriser « toujours ».
 
 Pas d'outil pour rejoindre ou quitter un groupe de projet : ces actions de l'API n'ont pas
