@@ -1,6 +1,6 @@
 """Session sur le site ``myges.fr`` (JSF + CAS), pour ce que l'API mobile ne fait pas.
 
-Seul usage pour l'instant : le **dépôt d'un livrable** sur une étape de projet. L'API
+Usage : **déposer et supprimer un livrable** sur une étape de projet. L'API
 ``api.kordis.fr`` n'a aucune route d'envoi (voir ``docs/api-notes.md``, 2026-11-10) ; le site
 le fait en trois temps, reproduits ici tels que les fait le navigateur :
 
@@ -9,6 +9,9 @@ le fait en trois temps, reproduits ici tels que les fait le navigateur :
    MD5 du fichier entier), qui répond ``{"files": [{"hash", "path", "type", "extension"}]}`` ;
 3. rattacher le fichier au formulaire (``saveStepFile``), puis « Valider le livrable » avec
    l'intitulé et la description.
+
+La suppression clique « Supprimer le livrable » (``btDelete``) puis « Oui » sur la ligne du
+tableau de l'étape (paginé par 5).
 
 La connexion passe par le CAS ``ges-cas.kordis.fr`` : il faut le **mot de passe**, le token de
 l'API n'y est pas accepté. Les identifiants JSF (``j_idt309``…) sont relus dans les pages, pas
@@ -27,6 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -34,6 +38,7 @@ from .client import DEFAULT_USER_AGENT
 from .errors import InvalidCredentialsError, MyGESError, WriteNotAllowedError
 
 WEB_URL = "https://myges.fr"
+PARIS = ZoneInfo("Europe/Paris")  # heures affichées par le site
 CHUNK_SIZE = 2 * 1024 * 1024  # maxChunkSize du composant d'envoi
 MAX_FILE_SIZE = 300 * 1024 * 1024  # « La taille maximale autorisée est de 300.0 Mo. »
 TITLE_MAX = 70  # maxlength du champ « Intitulé »
@@ -294,6 +299,19 @@ class MyGESWeb:
         )  # fmt: skip
         return partial.html
 
+    def _open_step(
+        self, group_id: int, step_number: int, deadline: datetime | None
+    ) -> tuple[str, dict[str, str], int, str]:
+        """Page du groupe ouverte sur l'étape : (url, état JSF, index de l'onglet, contenu)."""
+        url = f"{self.base_url}/common/project-group-gestion/{group_id}"
+        page = self.get_page(f"/common/project-group-gestion/{group_id}").text
+        view = _view_state(page)
+        if view is None or FORM not in page:
+            raise WebError(f"page de suivi du groupe {group_id} méconnaissable")
+        state = {"view": view}
+        index, content = self._select_tab(url, page, state, step_number, deadline)
+        return url, state, index, content
+
     # ------------------------------------------------------------ Dépôt
 
     def upload_step_file(
@@ -310,8 +328,8 @@ class MyGESWeb:
         """Dépose ``path`` comme livrable de l'étape ``step_number`` du groupe ``group_id``.
 
         ``deadline`` (``ProjectStep.psp_limit_date``) départage deux étapes de même numéro.
-        Le livrable est visible par l'intervenant et par tout le groupe ; il se supprime
-        depuis le site.
+        Le livrable est visible par l'intervenant et par tout le groupe ; il se supprime avec
+        :meth:`delete_step_file`.
         """
         if not self.allow_writes:
             raise WriteNotAllowedError(
@@ -326,14 +344,7 @@ class MyGESWeb:
             raise ValueError("myGES refuse les fichiers de plus de 300 Mo")
         title = (title or path.name).strip()[:TITLE_MAX]
 
-        url = f"{self.base_url}/common/project-group-gestion/{group_id}"
-        page = self.get_page(f"/common/project-group-gestion/{group_id}").text
-        view = _view_state(page)
-        if view is None or FORM not in page:
-            raise WebError(f"page de suivi du groupe {group_id} méconnaissable")
-        state = {"view": view}
-
-        index, content = self._select_tab(url, page, state, step_number, deadline)
+        url, state, index, content = self._open_step(group_id, step_number, deadline)
         button = f"{TABS}:{index}:addStepFileButton"
         if button not in content:
             raise WebError(f"pas de bouton « Ajouter un livrable » sur l'étape n°{step_number}")
@@ -368,6 +379,85 @@ class MyGESWeb:
         if errors:
             raise WebError("livrable refusé : " + " ; ".join(errors))
         return UploadResult(md5, size, title, [text for _, text in messages])
+
+    # ------------------------------------------------------------ Suppression
+
+    def delete_step_file(
+        self,
+        group_id: int,
+        name: str,
+        *,
+        step_number: int,
+        deadline: datetime | None = None,
+        begin_upload: datetime | None = None,
+    ) -> list[str]:
+        """Supprime le livrable ``name`` (``psf_name``) de l'étape, comme le bouton du site.
+
+        ``begin_upload`` (``ProjectStepFile.psf_begin_upload``) départage deux livrables de
+        même nom. Renvoie les messages affichés par le site. L'historique du groupe garde
+        « a supprimé le livrable ».
+        """
+        if not self.allow_writes:
+            raise WriteNotAllowedError(
+                "delete_step_file supprime un livrable sur myGES : créer le client avec "
+                "allow_writes=True pour l'autoriser."
+            )
+        url, state, index, content = self._open_step(group_id, step_number, deadline)
+        tab = {f"{TABS}_activeIndex": str(index)}
+        row = self._find_row(url, state, index, content, name, begin_upload)
+        delete = re.search(r'<button id="([^"]+:btDelete)"', row)
+        confirm = re.search(
+            r'<button id="([^"]+)"[^>]*>(?:(?!</button>).)*>Oui</span></button>', row, flags=re.S
+        )
+        if delete is None or confirm is None:
+            raise WebError(f"pas de bouton « Supprimer le livrable » pour « {name} »")
+        self._ajax(url, state, delete.group(1), **{delete.group(1): delete.group(1)}, **tab)
+        done = self._ajax(
+            url, state, confirm.group(1),
+            render=f"{WIDGET}:panelStep {WIDGET}:outputPanelGroupLogs",
+            **{confirm.group(1): confirm.group(1)}, **tab,
+        )  # fmt: skip
+        messages = done.messages()
+        errors = [text for severity, text in messages if severity in ("error", "fatal")]
+        if errors:
+            raise WebError("suppression refusée : " + " ; ".join(errors))
+        return [text for _, text in messages]
+
+    def _find_row(
+        self, url: str, state: dict[str, str], index: int, content: str,
+        name: str, begin_upload: datetime | None,
+    ) -> str:  # fmt: skip
+        """Ligne du tableau des livrables de l'onglet, en parcourant ses pages (5 lignes)."""
+        table = re.search(rf'id="({re.escape(TABS)}:{index}:[^":]+)_data"', content)
+        if table is None:
+            raise WebError("tableau des livrables méconnaissable")
+        table_id = table.group(1)
+        count = re.search(r"rowCount:(\d+)", content[content.find(f'"{table_id}"') :])
+        total = int(count.group(1)) if count else 0
+        per_page = 5
+        wanted = f"{begin_upload.astimezone(PARIS):%d/%m/%Y %Hh%Mm%S}" if begin_upload else None
+        body, first = content, 0
+        same_name: list[str] = []
+        while True:
+            for row in re.split(r'(?=<tr data-ri=")', body)[1:]:
+                shown = re.search(r'<span style="display: inline">(.*?)</span>', row, flags=re.S)
+                if shown is None or html.unescape(shown.group(1)).strip() != name:
+                    continue
+                if wanted is None or wanted in _text(row):
+                    return row
+                same_name.append(row)
+            first += per_page
+            if first >= total:
+                break
+            body = self._ajax(
+                url, state, table_id, render=table_id,
+                **{f"{table_id}_pagination": "true", f"{table_id}_first": str(first),
+                   f"{table_id}_rows": str(per_page), f"{table_id}_encodeFeature": "true",
+                   f"{TABS}_activeIndex": str(index)},
+            ).html  # fmt: skip
+        if len(same_name) == 1:
+            return same_name[0]  # heure affichée différente (arrondi), nom sans ambiguïté
+        raise WebError(f"livrable « {name} » introuvable sur cette étape")
 
     def _send_file(
         self, path: Path, size: int, md5: str, progress: Progress | None

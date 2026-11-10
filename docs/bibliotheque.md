@@ -47,8 +47,9 @@ async with AsyncMyGES.from_env() as ges:
 ## Modules annexes
 
 - `myges.web.MyGESWeb` : session sur le site `myges.fr` (CAS, mot de passe requis), pour ce
-  que l'API ne fait pas. `upload_step_file(group_id, path, step_number=1)` dépose un livrable
-  (`allow_writes=True` obligatoire).
+  que l'API ne fait pas. `upload_step_file(group_id, path, step_number=1)` dépose un livrable,
+  `delete_step_file(group_id, "rapport.pdf", step_number=1)` le supprime
+  (`allow_writes=True` obligatoire pour les deux).
 - `myges.ics.to_ics(events)` : export iCalendar.
 - `myges.watch` : instantanés et détection de changements (sans réseau).
 - `myges.blocs` : moyennes pondérées par bloc, simulation.

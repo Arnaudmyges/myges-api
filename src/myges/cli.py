@@ -18,7 +18,7 @@ import sys
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, TypeVar
@@ -943,7 +943,18 @@ ProjectDescription = Annotated[
     str,
     typer.Option("--description", metavar="TEXTE", help="Avec --upload : description du livrable."),
 ]
-YesOpt = Annotated[bool, typer.Option("--yes", help="Ne pas demander confirmation avant le dépôt.")]
+ProjectDelete = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--delete", metavar="LIVRABLE",
+        help="Avec --inspect : supprimer un livrable de mon groupe (nom ou id affiché après "
+        "« déposé »), répétable. Passe avant --upload pour remplacer un fichier.",
+    ),
+]  # fmt: skip
+YesOpt = Annotated[
+    bool,
+    typer.Option("--yes", help="Ne pas demander confirmation avant un dépôt ou une suppression."),
+]
 CHAT_LINES = 10  # derniers messages affichés par --inspect
 
 
@@ -956,6 +967,7 @@ class _Upload:
     title: str | None = None
     description: str = ""
     yes: bool = False
+    delete: list[str] = field(default_factory=list)
 
 
 def _my_group(project: Any, uid: int) -> Any:
@@ -980,13 +992,16 @@ def _projects_command(
     now = datetime.now(_TZ)
     if message is not None and inspect is None:
         raise typer.BadParameter("à utiliser avec --inspect PROJET", param_hint="--message")
-    if upload is not None and not upload.files:
+    if upload is not None and not upload.files and not upload.delete:
         if upload.step is not None or upload.title or upload.description:
             hint = "--step/--title/--description"
             raise typer.BadParameter("à utiliser avec --upload FICHIER", param_hint=hint)
         upload = None
     if upload is not None and inspect is None:
-        raise typer.BadParameter("à utiliser avec --inspect PROJET", param_hint="--upload")
+        hint = "--upload/--delete"
+        raise typer.BadParameter("à utiliser avec --inspect PROJET", param_hint=hint)
+    if upload is not None and not upload.files and upload.step is not None:
+        raise typer.BadParameter("à utiliser avec --upload FICHIER", param_hint="--step")
     if upload is not None and upload.title and len(upload.files) > 1:
         raise typer.BadParameter("un seul fichier avec --title", param_hint="--title")
     if inspect is not None:
@@ -1034,10 +1049,14 @@ def _inspect_project(
         raise typer.Exit(2)
     if upload is not None:
         if group is None:
-            err.print("[red]Pas de groupe pour ce projet : rien n'est déposé.[/]")
+            err.print("[red]Pas de groupe pour ce projet : rien n'est déposé ni supprimé.[/]")
             raise typer.Exit(2)
-        project = _upload_deliverables(client, project, group, upload)
-        group = _my_group(project, uid)
+        if upload.delete:
+            project = _delete_deliverables(client, project, group, upload)
+            group = _my_group(project, uid)
+        if upload.files:
+            project = _upload_deliverables(client, project, group, upload)
+            group = _my_group(project, uid)
     console.print(f"[bold]{project.name.strip()}[/]")
     console.print(f"{project.course_name} · {project.author or '—'}")
     if group is None:
@@ -1072,6 +1091,7 @@ def _inspect_project(
         for f in delivered:
             console.print(
                 f"  [green]déposé[/] : {escape(f.psf_name or '?')} ({_fmt_dt(f.psf_end_upload)})"
+                f"  [dim]id {f.psf_id}[/]"
             )
     files = project.project_files or []
     if files:
@@ -1132,6 +1152,94 @@ def _advance(bar: Any, task: Any, sent: int, _total: int) -> None:
     bar.update(task, completed=sent)
 
 
+def _web_username() -> str:
+    username = _current_username()
+    if not username:
+        err.print("[red]Cette action passe par le site myges.fr : lancer d'abord `myges login`.[/]")
+        raise typer.Exit(2)
+    return username
+
+
+def _find_deliverables(project: Any, group: Any, refs: list[str]) -> list[tuple[Any, Any]]:
+    """(étape, livrable) de mon groupe pour chaque référence : id, nom exact ou partie du nom."""
+    mine = [
+        (s, f)
+        for s in project.steps or []
+        for f in s.files or [] if f.pgr_id == group.project_group_id
+    ]  # fmt: skip
+    found: list[tuple[Any, Any]] = []
+    for ref in refs:
+        ref = ref.strip()
+        matches = [(s, f) for s, f in mine if ref.isdigit() and f.psf_id == int(ref)]
+        matches = matches or [(s, f) for s, f in mine if (f.psf_name or "") == ref]
+        words = _fold(ref).split()
+        matches = matches or [
+            (s, f) for s, f in mine if words and all(w in _fold(f.psf_name or "") for w in words)
+        ]
+        if len(matches) != 1:
+            err.print(
+                f"[red]« {escape(ref)} » est ambigu[/], préciser l'id parmi :" if matches
+                else f"[red]Aucun livrable de mon groupe ne correspond à « {escape(ref)} ».[/]"
+            )  # fmt: skip
+            for _, f in matches or mine:
+                err.print(f"  {f.psf_id}  {f.psf_name}  ({_fmt_dt(f.psf_end_upload)})")
+            raise typer.Exit(2)
+        if matches[0] not in found:
+            found.append(matches[0])
+    return found
+
+
+def _delete_deliverables(client: MyGES, project: Any, group: Any, upload: _Upload) -> Any:
+    """Supprime des livrables par le site myges.fr, vérifie par l'API, renvoie le projet relu."""
+    from .web import MyGESWeb
+
+    targets = _find_deliverables(project, group, upload.delete)
+    username = _web_username()
+    console.print(
+        f"[bold]Suppression[/] sur « {escape(project.name.strip())} », "
+        f"{escape(group.group_name or '')} :"
+    )
+    for step, f in targets:
+        console.print(
+            f"  {escape(f.psf_name or '?')}  [dim]étape {step.psp_number}, "
+            f"déposé le {_fmt_dt(f.psf_end_upload)} (id {f.psf_id})[/]"
+        )
+    console.print("[dim]L'historique du groupe gardera la trace de la suppression.[/]")
+    if not upload.yes and not typer.confirm("Supprimer ?", default=False):
+        raise typer.Exit(1)
+
+    password = _current_password() or typer.prompt("Mot de passe myGES", hide_input=True)
+    done: list[Any] = []
+    try:
+        with MyGESWeb(username, password, allow_writes=True) as web:
+            for step, f in targets:
+                web.delete_step_file(
+                    group.project_group_id, f.psf_name or "",
+                    step_number=step.psp_number or 1, deadline=step.psp_limit_date,
+                    begin_upload=f.psf_begin_upload,
+                )  # fmt: skip
+                done.append(f)
+                console.print(f"[green]✗[/] {escape(f.psf_name or '?')} supprimé")
+    except MyGESError as exc:
+        err.print(f"[red]Échec de la suppression :[/] {escape(str(exc))}")
+        if done:
+            err.print("Déjà supprimés : " + ", ".join(f.psf_name or "?" for f in done))
+        raise typer.Exit(1) from exc
+
+    fresh = client.project(project.project_id)
+    left = {f.psf_id for s in fresh.steps or [] for f in s.files or []}
+    still = [f for f in done if f.psf_id in left]
+    if still:
+        err.print(
+            "[yellow]![/] Encore présent(s) dans l'API : "
+            + ", ".join(f.psf_name or "?" for f in still)
+            + " — vérifier sur myges.fr."
+        )
+    else:
+        console.print("[green]✓[/] Vérifié dans myGES : plus de trace dans les livrables.\n")
+    return fresh
+
+
 def _upload_deliverables(client: MyGES, project: Any, group: Any, upload: _Upload) -> Any:
     """Dépose les fichiers par le site myges.fr, vérifie par l'API, renvoie le projet relu."""
     from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn
@@ -1140,10 +1248,7 @@ def _upload_deliverables(client: MyGES, project: Any, group: Any, upload: _Uploa
 
     now = datetime.now(_TZ)
     step = _upload_step(project, upload.step, now)
-    username = _current_username()
-    if not username:
-        err.print("[red]Le dépôt passe par le site myges.fr : lancer d'abord `myges login`.[/]")
-        raise typer.Exit(2)
+    username = _web_username()
     members = ", ".join(f"{st.firstname} {st.name}" for st in group.project_group_students or [])
     console.print(
         f"[bold]Dépôt[/] sur « {escape(project.name.strip())} », {escape(group.group_name or '')}"
@@ -1227,6 +1332,7 @@ def projects(
     download: ProjectDownload = None,
     message: ProjectMessage = None,
     upload: ProjectUpload = None,
+    delete: ProjectDelete = None,
     step: ProjectStep = None,
     title: ProjectTitle = None,
     description: ProjectDescription = "",
@@ -1241,7 +1347,7 @@ def projects(
         catalog = _Courses(client, year)
         _projects_command(
             "Projets", data, client.profile().uid, catalog, inspect, download, client, message,
-            _Upload(upload or [], step, title, description, yes),
+            _Upload(upload or [], step, title, description, yes, delete or []),
         )  # fmt: skip
 
 
@@ -1252,6 +1358,7 @@ def practicals(
     download: ProjectDownload = None,
     message: ProjectMessage = None,
     upload: ProjectUpload = None,
+    delete: ProjectDelete = None,
     step: ProjectStep = None,
     title: ProjectTitle = None,
     description: ProjectDescription = "",
@@ -1266,7 +1373,7 @@ def practicals(
         catalog = _Courses(client, year)
         _projects_command(
             "TP", data, client.profile().uid, catalog, inspect, download, client, message,
-            _Upload(upload or [], step, title, description, yes),
+            _Upload(upload or [], step, title, description, yes, delete or []),
         )  # fmt: skip
 
 

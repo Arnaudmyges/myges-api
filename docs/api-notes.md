@@ -158,7 +158,12 @@ Observé en réel à l'ouverture des inscriptions du « Cloud Day » (12:00) :
   local, et l'historique du groupe affiche « a envoyé le livrable ». L'extension retenue est
   la dernière (`.gz` pour un `.tar.gz`).
 - Plusieurs livrables par étape et par groupe sont acceptés (jusqu'à 17 observés).
-  Suppression : « Supprimer le livrable » (`btDelete`) puis « Oui » dans la confirmation ;
-  l'historique garde « a supprimé le livrable ».
+  Suppression : « Supprimer le livrable » (`btDelete`, qui sélectionne la ligne) puis « Oui »
+  (bouton de la confirmation de la même ligne). L'historique garde « a supprimé le livrable »,
+  et le `psf_id` disparaît aussitôt de l'API. Vérifié en réel sur un fichier de test.
+- Le tableau des livrables d'une étape est paginé par 5 (`rowCount` dans le script du widget,
+  pages suivantes par `{table}_pagination`/`_first`/`_rows`). Les lignes ne portent pas le
+  `psf_id` : on les reconnaît au nom et à l'heure de début d'envoi, affichée à la seconde en
+  heure de Paris (`psf_begin_upload`).
 - Taille maximale annoncée : 300 Mo. Un nom de fichier sans extension, ou avec une extension
   de plus de 10 caractères, est refusé par le navigateur avant tout envoi.

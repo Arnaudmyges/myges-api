@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -35,22 +37,50 @@ LOGIN_PAGE = f"""<html><body><form id="fm1" class="fm-v clearfix"
 <a href="{CAS}">x</a></body></html>"""
 
 
-def _tab(index: int, deadline: str) -> str:
+Row = tuple[str, str]  # (nom affiché, début d'envoi tel qu'affiché)
+
+
+def _rows(index: int, rows: list[Row], first: int = 0) -> str:
+    """Lignes du tableau des livrables, page de 5 commençant à ``first``, comme PrimeFaces."""
+    table = f"{T}:{index}:j_idt362"
+    out = []
+    for ri, (name, begin) in enumerate(rows[first : first + 5], start=first):
+        out.append(
+            f'<tr data-ri="{ri}" class="ui-widget-content" role="row"><td role="gridcell">'
+            f'<span style="">{begin}</span></td><td><span style="display: inline">{name}</span>'
+            f'</td><td><button id="{table}:{ri}:btShowStepFile"><span>v</span></button>'
+            f'<button id="{table}:{ri}:btDelete" onclick="PF(\'confirmation\').show();">'
+            f'<span class="ui-button-text ui-c">ui-button</span></button>'
+            f'<div id="{table}:{ri}:confirmDialog"><button id="{table}:{ri}:j_idt388" '
+            f'onclick="x"><span class="ui-icon"></span><span class="ui-button-text ui-c">Oui'
+            f'</span></button><button id="{table}:{ri}:declineButton"><span>Non</span></button>'
+            "</div></td></tr>"
+        )
+    return "".join(out)
+
+
+def _tab(index: int, deadline: str, rows: list[Row] | None = None) -> str:
+    rows = rows or []
+    table = f"{T}:{index}:j_idt362"
     return (
         f'<div id="{T}:{index}:tab" class="ui-tabs-panel ui-widget-content" role="tabpanel">'
         f"Description : Rendu. Date Limite : {deadline}"
+        f'<div id="{table}" class="ui-datatable"><table><tbody id="{table}_data">'
+        f"{_rows(index, rows)}</tbody></table></div>"
+        f'<script>PrimeFaces.cw("DataTable","w",{{id:"{table}",paginator:{{rows:5,'
+        f"rowCount:{len(rows)},page:0}}}});</script>"
         f'<button id="{T}:{index}:addStepFileButton" name="{T}:{index}:addStepFileButton">'
         "Ajouter un livrable</button></div>"
     )
 
 
-def _group_page(view: str) -> str:
+def _group_page(view: str, rows: list[Row] | None = None) -> str:
     return f"""<html><body>
 <form id="projectGroupGestionForm" name="projectGroupGestionForm" method="post"
  enctype="multipart/form-data">
 <ul><li role="tab"><a href="#{T}:0:tab"><span>Etape n°1</span></a></li>
 <li role="tab"><a href="#{T}:1:tab"><span>Etape n°2</span></a></li></ul>
-{_tab(0, "15/11/2026 07h00")}
+{_tab(0, "15/11/2026 07h00", rows)}
 <div id="{T}:1:tab" class="ui-tabs-panel ui-widget-content ui-helper-hidden" role="tabpanel"
  aria-hidden="true"></div>
 <input type="hidden" name="javax.faces.ViewState" id="javax.faces.ViewState" value="{view}" />
@@ -77,7 +107,13 @@ def _partial(updates: dict[str, str]) -> httpx.Response:
 class FakeSite:
     """Le strict nécessaire de myges.fr : CAS, page du groupe, requêtes JSF, envoi par morceaux."""
 
-    def __init__(self, password: str = "secret", save_message: str | None = None) -> None:
+    def __init__(
+        self, password: str = "secret", save_message: str | None = None,
+        rows: list[Row] | None = None,
+    ) -> None:  # fmt: skip
+        self.rows = list(rows or [])
+        self.deleted: list[str] = []
+        self._selected: int | None = None
         self.password = password
         self.save_message = save_message
         self.logged_in = False
@@ -115,7 +151,7 @@ class FakeSite:
         if not self.logged_in:
             return httpx.Response(302, headers={"location": CAS})
         self.view += 1
-        return httpx.Response(200, text=_group_page(f"v{self.view}"))
+        return httpx.Response(200, text=_group_page(f"v{self.view}", self.rows))
 
     def jsf(self, request: httpx.Request) -> httpx.Response:
         assert request.headers["Faces-Request"] == "partial/ajax"
@@ -126,6 +162,16 @@ class FakeSite:
         if source == T:
             index = int(form[f"{T}_tabindex"])
             return _partial({T: _tab(index, "20/12/2026 23h59")})
+        if source == f"{T}:0:j_idt362":
+            assert form[f"{source}_pagination"] == "true"
+            return _partial({source: _rows(0, self.rows, int(form[f"{source}_first"]))})
+        if source.endswith(":btDelete"):
+            self._selected = int(source.split(":")[-2])
+            return _partial({})
+        if source.endswith(":j_idt388"):
+            assert self._selected == int(source.split(":")[-2])  # « Oui » de la même ligne
+            self.deleted.append(self.rows.pop(self._selected)[0])
+            return _partial({f"{W}:panelStep": "<div>ok</div>"})
         if source.endswith("addStepFileButton"):
             return _partial({f"{W}:panelAddStepFile": PANEL})
         if source == f"{W}:j_idt309":
@@ -331,3 +377,84 @@ def test_cli_upload_option_errors(home: Path, report: Path) -> None:
         )  # fmt: skip
         step_only = CliRunner().invoke(app, ["projects", "-i", "24001", "--step", "2"])
     assert alone.exit_code == titled.exit_code == step_only.exit_code == 2
+
+
+# ---------------------------------------------------------------- Suppression
+
+FIXTURE_BEGIN = datetime.fromtimestamp(1792000000, tz=timezone.utc)  # rapport.pdf du fixture
+
+
+def _shown(when: datetime) -> str:
+    return f"{when.astimezone(ZoneInfo('Europe/Paris')):%d/%m/%Y %Hh%Mm%S}"
+
+
+def test_delete_on_second_page_by_upload_time() -> None:
+    # Deux « rapport.pdf » : seule l'heure de début d'envoi les distingue ; le bon est en page 2.
+    other = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    rows = [(f"f{i}.pdf", _shown(other)) for i in range(5)]
+    rows += [("rapport.pdf", _shown(other)), ("rapport.pdf", _shown(FIXTURE_BEGIN))]
+    site = FakeSite(rows=rows)
+    with respx.mock(assert_all_called=False) as router:
+        site.install(router)
+        with MyGESWeb("jdupont", "secret", allow_writes=True) as web:
+            web.delete_step_file(GROUP, "rapport.pdf", step_number=1, begin_upload=FIXTURE_BEGIN)
+    assert site.deleted == ["rapport.pdf"]
+    assert site.rows[-1] == ("rapport.pdf", _shown(other))  # l'homonyme est resté
+    assert site.ajax[0][f"{T}:0:j_idt362_first"] == "5"
+
+
+def test_delete_guards() -> None:
+    site = FakeSite(rows=[("a.pdf", "01/10/2026 09h00m00")])
+    with respx.mock(assert_all_called=False) as router:
+        site.install(router)
+        with MyGESWeb("jdupont", "secret") as web, pytest.raises(WriteNotAllowedError):
+            web.delete_step_file(GROUP, "a.pdf", step_number=1)
+        with (
+            MyGESWeb("jdupont", "secret", allow_writes=True) as web,
+            pytest.raises(WebError, match="introuvable"),
+        ):
+            web.delete_step_file(GROUP, "b.pdf", step_number=1)
+    assert site.deleted == []
+
+
+def _without_files() -> dict[str, Any]:
+    project = copy.deepcopy(fixture("getProject"))
+    project["result"]["steps"][0]["files"] = []
+    return project
+
+
+def test_cli_delete_then_upload(home: Path, report: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MYGES_PASSWORD", "secret")
+    site = FakeSite(rows=[("rapport.pdf", _shown(FIXTURE_BEGIN))])
+    with respx.mock(assert_all_called=False) as router:
+        _mock_api(router, _without_files())
+        site.install(router)
+        result = CliRunner().invoke(
+            app,
+            ["projects", "-i", "24001", "--delete", "rapport", "--upload", str(report), "--yes"],
+            env={"COLUMNS": "200"},
+        )
+    assert result.exit_code == 0, result.output
+    assert "rapport.pdf supprimé" in result.output
+    assert "plus de trace" in result.output
+    assert site.deleted == ["rapport.pdf"]
+    out = result.output
+    assert out.index("rapport.pdf supprimé") < out.index("rapport final.pdf déposé")
+    assert site.uploaded() == report.read_bytes()
+
+
+def test_cli_delete_unknown_or_declined(home: Path) -> None:
+    site = FakeSite(rows=[("rapport.pdf", _shown(FIXTURE_BEGIN))])
+    with respx.mock(assert_all_called=False) as router:
+        _mock_api(router, fixture("getProject"))
+        site.install(router)
+        unknown = CliRunner().invoke(app, ["projects", "-i", "24001", "--delete", "chimie"])
+        shown = CliRunner().invoke(app, ["projects", "-i", "24001"])
+        declined = CliRunner().invoke(
+            app, ["projects", "-i", "24001", "--delete", "88001"], input="n\n"
+        )
+    assert unknown.exit_code == 2
+    assert "88001  rapport.pdf" in unknown.output  # propose les livrables du groupe
+    assert "id 88001" in shown.output
+    assert declined.exit_code == 1
+    assert site.deleted == []
