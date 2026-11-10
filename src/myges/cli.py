@@ -2293,22 +2293,31 @@ def watch(
         bool, typer.Option("--status", help="État des alertes : planification, dernier passage.")
     ] = False,
     every: Annotated[
-        int,
-        typer.Option(help=f"Intervalle en minutes, avec --install (min. {schedule.MIN_EVERY})."),
-    ] = schedule.DEFAULT_EVERY,
+        int | None,
+        typer.Option(
+            help="Avec --install : intervalle en minutes "
+            f"(défaut : {schedule.DEFAULT_EVERY}, min. {schedule.MIN_EVERY}).",
+        ),
+    ] = None,
 ) -> None:
     """Signaler les nouveautés : supports de cours, notes, absences, agenda.
 
     Les nouveautés sont envoyées aux canaux configurés avec `myges notify add`. Le premier
     passage enregistre seulement l'état. `myges watch --install` le lance automatiquement.
     """
+    if every is not None and not install:
+        # Sans --install, l'intervalle ne voulait rien dire et passait inaperçu.
+        raise typer.BadParameter(
+            "à utiliser avec --install (ex. `myges watch --install --every 7`)",
+            param_hint="--every",
+        )
     if uninstall:
         return _watch_uninstall()
     username = _current_username()
     if username is None:
         raise _not_logged_in()
     if install:
-        return _watch_install(every)
+        return _watch_install(schedule.DEFAULT_EVERY if every is None else every)
     if status:
         return _watch_status(username)
     path = _state_path(username)

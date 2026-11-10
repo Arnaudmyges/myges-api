@@ -127,3 +127,11 @@ def test_install_preserves_blank_lines_and_comments() -> None:
     installed = schedule.with_entry(crontab, schedule.cron_line("/x/myges", 30))
     assert installed.startswith(crontab)
     assert schedule.without_entry(installed) == crontab
+
+
+def test_every_without_install_is_refused(logged_in: Path, fake_system: FakeSystem) -> None:
+    # `myges watch --every 7` faisait un passage normal en ignorant l'intervalle, sans rien dire.
+    result = CliRunner().invoke(app, ["watch", "--every", "7"])
+    assert result.exit_code == 2
+    assert "--install" in result.output
+    assert fake_system.crontab is None
