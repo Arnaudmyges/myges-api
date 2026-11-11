@@ -94,6 +94,22 @@ Ce que le serveur distant protège :
 - **Outils** : 27, lecture et brouillons d'e-mail seulement. Pas d'inscription, pas de
   message de groupe, pas de téléchargement : pour ça, Claude Code ou Claude Desktop.
 
+### Jeton d'agent (programme sans navigateur)
+
+Un agent automatique (passerelle MCP, tâche planifiée) ne peut pas remplir la page de
+connexion. On lui donne un jeton fixe, créé sur le serveur :
+
+```bash
+myges mcp --agent-token coach         # affiche le jeton une seule fois
+myges mcp --agents                    # noms et dates de création
+myges mcp --revoke-agent coach        # le retirer (--revoke retire aussi tous les agents)
+```
+
+L'agent l'envoie en en-tête `Authorization: Bearer <jeton>` vers `https://…/mcp`. Le
+jeton est **en lecture seule** (les brouillons d'e-mail lui sont refusés), ne périme pas,
+et n'est gardé que haché, dans `~/.local/state/myges/mcp-agents.json` (0600). Un ajout ou
+un retrait vaut sans redémarrer le serveur. Recréer un jeton du même nom remplace l'ancien.
+
 ## Vie privée
 
 Les réponses des outils (notes, absences, e-mails de vos camarades…) sont envoyées au

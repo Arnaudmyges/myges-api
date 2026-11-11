@@ -16,6 +16,7 @@ Lancement : ``myges mcp`` (stdio), ou ``myges mcp --install`` pour Claude Code.
 
 from __future__ import annotations
 
+import functools
 import itertools
 import os
 import subprocess
@@ -279,6 +280,23 @@ def _person(person: Any, **extra: Any) -> dict[str, Any]:
     return {"name": cli._full_name(person), "email": person.email, **extra}
 
 
+def _humans_only(func: _F) -> _F:
+    """À distance, un jeton d'agent (`myges mcp --agent-token`) est en lecture seule."""
+
+    @functools.wraps(func)
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+
+        from .mcp_remote import AGENT_PREFIX
+
+        token = get_access_token()
+        if token is not None and token.client_id.startswith(AGENT_PREFIX):
+            raise ToolError("jeton d'agent : lecture seule, pas de brouillon d'e-mail")
+        return func(*args, **kwargs)
+
+    return guarded  # type: ignore[return-value]
+
+
 def build_server(remote: bool = False, **auth: Any) -> MCPServer:
     """Serveur MCP. ``remote`` (claude.ai, via HTTP) : lecture et brouillons seulement ;
     ``auth`` : ``auth`` et ``auth_server_provider`` de ``MCPServer`` (OAuth)."""
@@ -295,6 +313,8 @@ def build_server(remote: bool = False, **auth: Any) -> MCPServer:
     def tool(annotations: ToolAnnotations) -> Callable[[_F], _F]:
         if remote and annotations not in (READ, DRAFT):
             return lambda func: func  # non exposé à distance
+        if remote and annotations is DRAFT:
+            return lambda func: server.tool(annotations=annotations)(_humans_only(func))
         return server.tool(annotations=annotations)
 
     @tool(READ)

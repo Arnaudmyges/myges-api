@@ -342,3 +342,95 @@ def test_tool_call_over_http(server: TestClient) -> None:
             )
         )
     assert called["result"]["structuredContent"]["overall_average"] == pytest.approx(15.25)
+
+
+# ---------------------------------------------------------------- Jetons d'agent
+
+
+def call(server: TestClient, token: str, name: str, arguments: dict[str, Any]) -> Any:
+    session = initialize(server, token)
+    return rpc_result(
+        rpc(server, token, "tools/call", {"name": name, "arguments": arguments}, **session)
+    )
+
+
+def test_agent_token_reads_without_oauth(server: TestClient, home: Path) -> None:
+    import httpx
+    import respx
+
+    from conftest import fixture
+    from myges.client import API_URL
+
+    token = mcp_remote.create_agent_token("coach-oc", home / "oauth.json")
+    assert token.startswith("mga_")
+    stored = (home / "mcp-agents.json").read_text()
+    assert token not in stored
+    assert "coach-oc" in stored
+    assert (home / "mcp-agents.json").stat().st_mode & 0o077 == 0
+    with respx.mock(assert_all_called=False) as router:
+        for path, name in [
+            ("/me/years", "getYears"),
+            ("/me/2026/courses", "getCourses"),
+            ("/me/2026/grades", "getGrades"),
+        ]:
+            router.get(f"{API_URL}{path}").mock(
+                return_value=httpx.Response(200, json=fixture(name))
+            )
+        called = call(server, token, "grades", {})
+    assert called["result"]["structuredContent"]["overall_average"] == pytest.approx(15.25)
+
+
+def test_agent_token_cannot_draft_email(server: TestClient, home: Path) -> None:
+    token = mcp_remote.create_agent_token("coach-oc", home / "oauth.json")
+    called = call(server, token, "draft_email", {"to": ["a@b.fr"], "subject": "s", "body": "b"})
+    assert called["result"]["isError"] is True
+    assert "lecture seule" in called["result"]["content"][0]["text"]
+
+
+def test_human_token_can_still_draft_email(
+    server: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from myges import mail
+
+    monkeypatch.setattr(mail, "open_url", lambda url: False)
+    tokens = connect(server)
+    called = call(
+        server,
+        tokens["access_token"],
+        "draft_email",
+        {"to": ["a@b.fr"], "subject": "s", "body": "b"},
+    )
+    assert called["result"].get("isError") is not True
+    assert called["result"]["structuredContent"]["sent"] is False
+
+
+def test_agent_token_replaced_and_revoked_without_restart(server: TestClient, home: Path) -> None:
+    state = home / "oauth.json"
+    old = mcp_remote.create_agent_token("coach-oc", state)
+    assert rpc(server, old, "tools/list").status_code != 401
+    new = mcp_remote.create_agent_token("coach-oc", state)  # même nom : remplace
+    assert rpc(server, old, "tools/list").status_code == 401
+    assert rpc(server, new, "tools/list").status_code != 401
+    assert [a["name"] for a in mcp_remote.list_agents(state)] == ["coach-oc"]
+    assert mcp_remote.revoke_agent("coach-oc", state) is True
+    assert mcp_remote.revoke_agent("coach-oc", state) is False
+    assert rpc(server, new, "tools/list").status_code == 401
+
+
+def test_revoke_all_cuts_agent_tokens(server: TestClient, home: Path) -> None:
+    state = home / "oauth.json"
+    token = mcp_remote.create_agent_token("coach-oc", state)
+    assert mcp_remote.revoke_all(state) == 1
+    assert rpc(server, token, "tools/list").status_code == 401
+
+
+def test_agent_token_survives_revoke_endpoint(server: TestClient, home: Path) -> None:
+    token = mcp_remote.create_agent_token("coach-oc", home / "oauth.json")
+    server.post("/revoke", data={"token": token, "client_id": "x", "client_secret": ""})
+    assert rpc(server, token, "tools/list").status_code != 401
+
+
+@pytest.mark.parametrize("name", ["", "Coach", "a b", "../x", "x" * 41])
+def test_agent_names_are_checked(home: Path, name: str) -> None:
+    with pytest.raises(ValueError, match="minuscules"):
+        mcp_remote.create_agent_token(name, home / "oauth.json")

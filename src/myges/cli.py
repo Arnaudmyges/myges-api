@@ -3017,6 +3017,22 @@ def mcp_command(
         bool,
         typer.Option("--revoke", help="Déconnecter tous les clients du serveur distant."),
     ] = False,
+    agent_token: Annotated[
+        str | None,
+        typer.Option(
+            "--agent-token",
+            metavar="NOM",
+            help="Jeton fixe, en lecture seule, pour un agent sans navigateur (serveur "
+            "distant). Montré une seule fois ; remplace l'ancien du même nom.",
+        ),
+    ] = None,
+    revoke_agent: Annotated[
+        str | None,
+        typer.Option("--revoke-agent", metavar="NOM", help="Retirer le jeton d'un agent."),
+    ] = None,
+    agents: Annotated[
+        bool, typer.Option("--agents", help="Lister les jetons d'agent (noms et dates).")
+    ] = False,
 ) -> None:
     """Serveur MCP : demander à Claude « ma moyenne ? », « quelle salle pour Python ? »,
     « écris au prof que j'ai oublié Edusign »…
@@ -3033,6 +3049,37 @@ def mcp_command(
     except ImportError:
         err.print(f"[red]Le module MCP n'est pas installé.[/] Installer : {escape(MCP_INSTALL)}")
         raise typer.Exit(1) from None
+    if agent_token is not None:
+        from .mcp_remote import create_agent_token
+
+        try:
+            token = create_agent_token(agent_token)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--agent-token") from None
+        err.print(
+            f"Jeton de l'agent « {escape(agent_token)} » (lecture seule), montré une seule "
+            "fois. À envoyer en en-tête : Authorization: Bearer <jeton>"
+        )
+        print(token)
+        return
+    if revoke_agent is not None:
+        from .mcp_remote import revoke_agent as remove_agent
+
+        if not remove_agent(revoke_agent):
+            err.print(f"[red]Aucun jeton pour l'agent « {escape(revoke_agent)} ».[/]")
+            raise typer.Exit(1)
+        console.print(f"Jeton de l'agent « {escape(revoke_agent)} » retiré.")
+        return
+    if agents:
+        from .mcp_remote import list_agents
+
+        listed = list_agents()
+        if not listed:
+            console.print("Aucun jeton d'agent.")
+        for entry in listed:
+            created = datetime.fromtimestamp(entry.get("created_at", 0), _TZ)
+            console.print(f"{escape(str(entry.get('name')))}  créé le {created:%Y-%m-%d %H:%M}")
+        return
     if revoke:
         from .mcp_remote import revoke_all
 

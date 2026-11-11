@@ -183,6 +183,8 @@ le lien est affiché, à ouvrir sur une machine qui en a un.
   `myges mcp --install` pour l'ajouter à Claude Code
 - `myges mcp --http 127.0.0.1:8765 --public-url https://…` : connecteur pour claude.ai et
   le mobile (OAuth, lecture seule) ; `myges mcp --revoke` pour tout déconnecter
+- `myges mcp --agent-token NOM` : jeton fixe en lecture seule pour un agent sans navigateur
+  (`--agents` pour les lister, `--revoke-agent NOM` pour en retirer un)
 
 ## Exploration de l'API
 

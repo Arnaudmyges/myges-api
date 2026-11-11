@@ -16,6 +16,10 @@ Protections :
   (SHA-256) dans un fichier 0600. `myges mcp --revoke` les invalide tous.
 - **Outils** : lecture et brouillons d'e-mail uniquement. Pas d'inscription, pas de
   message de groupe, pas de fichier écrit sur le serveur.
+- **Jetons d'agent** (`myges mcp --agent-token NOM`) : pour un programme sans navigateur
+  (passerelle MCP d'un agent), un jeton fixe par nom, montré une seule fois, stocké haché
+  dans un fichier à part (0600) écrit seulement par la commande. **Lecture seule** : les
+  brouillons d'e-mail lui sont refusés. `--revoke-agent NOM` le retire, `--revoke` aussi.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ import html
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -78,6 +83,15 @@ def state_path() -> Path:
     return Path(base) / "myges" / "mcp-oauth.json"
 
 
+def agents_path(state: Path | None = None) -> Path:
+    """Jetons d'agent : à côté de l'état OAuth, dans un fichier que le serveur ne fait que lire."""
+    return (state or state_path()).parent / "mcp-agents.json"
+
+
+AGENT_PREFIX = "agent:"
+AGENT_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
 def _digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -120,13 +134,82 @@ class _Store:
 
 
 def revoke_all(path: Path | None = None) -> int:
-    """Tout oublier : jetons et clients enregistrés (chaque client devra se reconnecter).
-    Renvoie le nombre de jetons invalidés."""
+    """Tout oublier : jetons et clients enregistrés (chaque client devra se reconnecter),
+    jetons d'agent compris. Renvoie le nombre de jetons invalidés."""
     store = _Store(path or state_path())
     count = len(store.access) + len(store.refresh)
     store.clients, store.access, store.refresh = {}, {}, {}
     store.save()
-    return count
+    agents = _read_agents(agents_path(path))
+    if agents:
+        _write_agents(agents_path(path), {})
+    return count + len(agents)
+
+
+def _read_agents(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_agents(path: Path, agents: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(agents, fh, indent=1)
+    tmp.replace(path)
+
+
+def create_agent_token(name: str, state: Path | None = None) -> str:
+    """Nouveau jeton pour l'agent ``name`` (remplace l'ancien du même nom). Renvoyé une
+    seule fois : seule son empreinte est gardée."""
+    if not AGENT_NAME.match(name):
+        raise ValueError("nom d'agent : minuscules, chiffres et tirets (40 caractères au plus)")
+    path = agents_path(state)
+    agents = {k: v for k, v in _read_agents(path).items() if v.get("name") != name}
+    token = "mga_" + secrets.token_urlsafe(32)
+    agents[_digest(token)] = {"name": name, "created_at": int(time.time())}
+    _write_agents(path, agents)
+    return token
+
+
+def revoke_agent(name: str, state: Path | None = None) -> bool:
+    """Retirer le jeton de l'agent ``name``. Faux s'il n'existait pas."""
+    path = agents_path(state)
+    agents = _read_agents(path)
+    kept = {k: v for k, v in agents.items() if v.get("name") != name}
+    if len(kept) == len(agents):
+        return False
+    _write_agents(path, kept)
+    return True
+
+
+def list_agents(state: Path | None = None) -> list[dict[str, Any]]:
+    return sorted(_read_agents(agents_path(state)).values(), key=lambda v: v.get("name", ""))
+
+
+class _Agents:
+    """Lecture des jetons d'agent, relue quand le fichier change (ajout ou retrait sans
+    redémarrer le serveur)."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._stamp: tuple[int, int] | None = None
+        self._agents: dict[str, Any] = {}
+
+    def get(self, digest: str) -> dict[str, Any] | None:
+        try:
+            st = self.path.stat()
+            stamp = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            stamp = None
+        if stamp != self._stamp:
+            self._agents = _read_agents(self.path) if stamp else {}
+            self._stamp = stamp
+        return self._agents.get(digest)
 
 
 class _Throttle:
@@ -150,6 +233,7 @@ class MyGESOAuthProvider:
     def __init__(self, public_url: str, path: Path | None = None) -> None:
         self.public_url = public_url.rstrip("/")
         self.store = _Store(path or state_path())
+        self.agents = _Agents(agents_path(path))
         self.codes: dict[str, AuthorizationCode] = {}
         self.pending: dict[str, tuple[float, str, AuthorizationParams]] = {}
         self.throttle = _Throttle()
@@ -255,6 +339,11 @@ class MyGESOAuthProvider:
         return self._tokens(client.client_id, refresh_token.resource)
 
     async def load_access_token(self, token: str) -> AccessToken | None:
+        agent = self.agents.get(_digest(token))
+        if agent is not None:
+            return AccessToken(
+                token=token, client_id=AGENT_PREFIX + str(agent.get("name")), scopes=[SCOPE]
+            )
         raw = self.store.access.get(_digest(token))
         if raw is None or raw["expires_at"] < time.time():
             return None
@@ -267,6 +356,8 @@ class MyGESOAuthProvider:
         )
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+        if token.client_id.startswith(AGENT_PREFIX):
+            return  # un jeton d'agent ne se retire que par `myges mcp --revoke-agent`
         # Révoquer l'un révoque tout ce que ce client détient.
         for table in (self.store.access, self.store.refresh):
             for key in [k for k, v in table.items() if v["client_id"] == token.client_id]:
